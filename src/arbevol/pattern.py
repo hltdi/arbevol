@@ -7,7 +7,7 @@ from utils import *
 # import numpy as np
 
 # Pattern elements
-DONT_CARE = 'x'
+DONT_CARE = -100.0
 
 # Noise to add to patterns
 NOISE = .05

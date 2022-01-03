@@ -5,7 +5,7 @@ Neural network with some number of layers.
 
 from utils import *
 
-NO_TARGET = 'x'
+NO_TARGET = -100.0
 
 ## RANDOM WEIGHT AND ACTIVATION GENERATION
 
@@ -13,14 +13,14 @@ def random_act(min_act, max_act):
     '''
     Generate a random activation between min_act and max_act.
     '''
-    return min_act + random.random() * (max_act - min_act)
+    return min_act + np.random.random() * (max_act - min_act)
 
 def random_weight(wt_range, neg=True):
     '''
     Generate a random weight in range wt_range. If neg is True, value may
     be negative.
     '''
-    val = random.random() * wt_range
+    val = np.random.random() * wt_range
     if neg:
         val -= wt_range / 2
     return val
@@ -102,7 +102,7 @@ class Network:
     def update_weights(self, lr=None, verbose=0):
         '''Update the weights into each layer other than the first.'''
         for l in reversed(self.layers[1:]):
-            l.learn(lr=lr, verbose=verbose)
+            l.update_weights(lr=lr, verbose=verbose)
 
     def step(self, pattern, train=True, show_act=False, lr=None, seqfirst=False, verbose=0):
         '''
@@ -176,7 +176,7 @@ class Layer:
                  momentum=0,          # momentum if is to be used
                  grad_clip=2.0,       # clip gradient norm here
                  error_func='xent',   # error function: quadratic or cross-entropy
-                 linear=False,        # is the activation function linear?
+                 linear=True,        # is the activation function linear?
                  rectified=True,      # is the activation rectified linear (if linear)?
                  leaky=True,          # is the activation rectified leaky linear?
                  bipolar=True,        # are activations negative and positive?
@@ -295,27 +295,54 @@ class Layer:
         if self.spec_weights:
             # Not checking whether the number of weights is right
             self.weights = self.spec_weights
+        elif self.array:
+            self.weights = self.make_weight_array(True)
         else:
             w = \
-            [ [random_weight(self.weight_range, self.neg_weights) for i in range(self.input_layer.size)] \
+            [ [self.genweight() for i in range(self.input_layer.size)] \
                              # Bias weight
-                             + ([random_weight(self.weight_range, self.neg_weights)] if self.has_bias else []) \
-                               for u in range(self.size) ]
-            if self.array:
-                w = l2a(w)
+              + ([self.genweight()] if self.has_bias else []) \
+              for u in range(self.size) ]
+#            if self.array:
+#                w = l2a(w)
             self.weights = w
         if self.momentum:
-            u = \
-            [ [0.0 for i in range(self.input_layer.size)] + ([0.0] if self.has_bias else []) \
-                                    for u in range(self.size) ]
             if self.array:
-                u = l2a(u)
-            self.last_wt_updates = u
+                self.last_wt_updates = self.make_weight_array(False)
+            else:
+                u = \
+                [ [0.0 for i in range(self.input_layer.size)] + ([0.0] if self.has_bias else []) \
+                                        for u in range(self.size) ]
+#                if self.array:
+#                    u = l2a(u)
+                self.last_wt_updates = u
         # gradients
-        g = [ [0.0 for i in range(self.input_layer.size)] + ([0.0] if self.has_bias else []) for u in range(self.size) ]
         if self.array:
-            g = l2a(g)
-        self.gradients = g
+            self.gradients = self.make_weight_array(False)
+        else:
+            g = [ [0.0 for i in range(self.input_layer.size)] + ([0.0] if self.has_bias else []) for u in range(self.size) ]
+#            if self.array:
+#                g = l2a(g)
+            self.gradients = g
+
+    def genweight(self, random=True):
+        '''Generate a random weight using parameters for this layer.'''
+        if not random:
+            return 0.0
+        return random_weight(self.weight_range, self.neg_weights)
+
+    def genweightA(self, random=True):
+        return np.vectorize(self.genweight)(random=random)
+
+    def make_weight_array(self, random=True):
+        '''
+        Create an array to used for weights, last weight updates, and gradients.
+        '''
+        d1 = self.input_layer.size
+        if self.has_bias:
+            d1 += 1
+        d2 = self.size
+        return np.array([ [self.genweightA(random=random) for i in range(d1)] for u in range(d2) ])
 
     def add_recurrent_units(self, recur_layer):
         '''Add recurrent units to the layer, representing copies of the activations on the previous time step
@@ -376,11 +403,31 @@ class Layer:
         for i in range(min([self.size, len(v)])):
             self.activations[i] = v[i]
 
+    def get_unit_output_error(self, targ, act):
+        """
+        Error for a single output unit.
+        """
+        if targ == NO_TARGET:
+            return 0.0
+        else:
+            return targ - act
+
+    def get_unit_output_error_array(self, targ, act):
+        return np.vectorize(self.get_unit_output_error)(targ, act)
+
     def do_errors(self, target):
         '''
         Figure the errors for each (output) unit, given the target pattern
         (list), returning RMS error.
         '''
+        if self.array:
+            self.errors = self.get_unit_output_error_array(target, self.activations)
+            if self.error_function == cross_entropy:
+                np.copyto(self.deltas, self.errors)
+            else:
+                self.deltas = self.errors * self.act_slope(self.activations, var=self.act_arg)
+            return math.sqrt(np.sum(self.errors * self.errors) / self.size)
+
         error = 0.0
         for i in range(self.size):
             targ = target[i]
@@ -389,7 +436,7 @@ class Layer:
             self.errors[i] = e
             if self.error_function == cross_entropy:
                 # Assumes the sigmoid activation function
-                self.deltas[i] = targ - act
+                self.deltas[i] = e
             else:
 #            error_deriv = self.error_deriv(act, targ)
                 self.deltas[i] = e * self.act_slope(act, var=self.act_arg)
@@ -397,12 +444,18 @@ class Layer:
         return math.sqrt(error / self.size)
 
     def gradient_norm(self):
+        if self.array:
+            sumofsquares = np.sum(np.square(self.gradients))
+            norm = math.sqrt(sumofsquares)
+            return norm
         sumofsqrs = 0.0
         for u in range(len(self.gradients)):
             # for each weight vector calculate the dot product with itself
             grads = self.gradients[u]
             sumofsqrs += dot_product(grads, grads)
-        return math.sqrt(sumofsqrs)
+        norm = math.sqrt(sumofsqrs)
+        print("** old norm {}".format(norm))
+        return norm
 
     def clip_gradients(self, norm):
         scale = self.grad_clip / norm
@@ -419,26 +472,33 @@ class Layer:
     def calc_gradients(self, delay=0, verbose=0):
 #        print("{} calculating gradients with delay {}".format(self, delay))
         deltas = self.get_deltas(delay)
-        for u in range(self.size):
-            delta = deltas[u]
-            if verbose:
-                print("Delta for {}|{}: {}".format(self, u, delta))
+        if self.array:
             if delay > 0:
-                for i in range(self.size):
-                    src_act = self.get_activation(i, delay=delay+1)
-                    gradient = src_act * delta
-                    self.gradients[u][i] = gradient
+                input_acts = self.delayed_activations[delay-1]
+                self.gradients = np.outer(deltas, input_acts)
             else:
- #               print("Layer {}, update gradients, delay 0".format(self))
-                for i in range(self.input_layer.size):
-                    src_act = self.input_layer.activations[i]
-                    gradient = src_act * delta
-#                    print(" Act {}, delta {}".format(src_act, delta))
-                    self.gradients[u][i] = gradient
-                self.gradients[u][self.input_layer.size] = delta
+                input_acts = self.input_vector()
+                self.gradients = np.outer(deltas, input_acts)
+        else:
+            for u in range(self.size):
+                delta = deltas[u]
+                if verbose:
+                    print("Delta for {}|{}: {}".format(self, u, delta))
+                if delay > 0:
+                    for i in range(self.size):
+                        src_act = self.get_activation(i, delay=delay+1)
+                        gradient = src_act * delta
+                        self.gradients[u][i] = gradient
+                else:
+                     for i in range(self.input_layer.size):
+                        src_act = self.input_layer.activations[i]
+                        gradient = src_act * delta
+                        self.gradients[u][i] = gradient
+                     # Bias
+                     self.gradients[u][self.input_layer.size] = delta
         return self.gradient_norm()
 
-    def learn(self, delay=0, lr=None, verbose=0):
+    def update_weights(self, delay=0, lr=None, verbose=0):
         '''Update the weights, first calculating the gradient norm.'''
         grad_norm = self.calc_gradients(delay=delay)
         # Clip gradients if this is not an output layer
@@ -448,44 +508,52 @@ class Layer:
         lr = lr or self.lr
 #        if delay > 0:
 #            print("Updating recurrent weights, delay: {}".format(delay))
-        for u in range(self.size):
-            if delay > 0:
-                # Update recurrent weights only
-                recurrent_indices = self.input_layer.recurrent_indices
-                weight_offset = recurrent_indices[0]
-                last_weight = recurrent_indices[-1]
-                for i in range(len(recurrent_indices)):
-#                while (i <= last_weight):
-#                for i in range(self.size):
-                    weight_index = i + weight_offset
+        if self.array:
+#            wt_incrs = np.zeros(self.weights.shape)
+            wt_incrs = lr * self.gradients
+#            wt_copy = np.copy(self.weights)
+            if self.momentum:
+                wt_incrs *= self.last_wt_updates
+                self.last_wt_updates = np.copy(wt_incrs)
+            self.weights += wt_incrs
+#        print("** new weight incrs\n{}".format(wt_incrs_new))
+        else:
+            for u in range(self.size):
+                if delay > 0:
+                    # Update recurrent weights only
+                    recurrent_indices = self.input_layer.recurrent_indices
+                    weight_offset = recurrent_indices[0]
+                    last_weight = recurrent_indices[-1]
+                    for i in range(len(recurrent_indices)):
+                        weight_index = i + weight_offset
+                        gradient = self.gradients[u][i]
+                        incr = gradient * lr
+                        self.weights[u][weight_index] += incr
+                    continue
+                for i in range(self.input_layer.size):
                     gradient = self.gradients[u][i]
                     incr = gradient * lr
-#                    print(" Weight increment for {}|{} at delay {}: {}".format(u, weight_index, delay, incr))
-                    self.weights[u][weight_index] += incr
-                continue
-            for i in range(self.input_layer.size):
-                gradient = self.gradients[u][i]
+                    if self.momentum:
+                        last_upd = self.last_wt_updates[u][i]
+                        incr += self.momentum * last_upd
+                    if verbose:
+                        print("  Weight increment for {},{}: {}".format(u, i, incr))
+                    wt_incrs[u][i] = incr
+                    self.weights[u][i] += incr
+                    if self.momentum:
+                        self.last_wt_updates[u][i] = incr
+                # Bias weight
+                gradient = self.gradients[u][self.input_layer.size]
                 incr = gradient * lr
-#                print(" Weight increment for {}|{} at delay 0: {}".format(u, i, incr))
                 if self.momentum:
-                    last_upd = self.last_wt_updates[u][i]
+                    last_upd = self.last_wt_updates[u][self.input_layer.size]
                     incr += self.momentum * last_upd
                 if verbose:
-                    print("  Weight increment for {},{}: {}".format(u, i, incr))
-                self.weights[u][i] += incr
-                if self.momentum:
-                    self.last_wt_updates[u][i] = incr
-            # Bias weight
-            gradient = self.gradients[u][self.input_layer.size]
-            incr = gradient * lr
-            if self.momentum:
-                last_upd = self.last_wt_updates[u][self.input_layer.size]
-                incr += self.momentum * last_upd
-            if verbose:
-                print(" Bias increment for {}: {}".format(u, incr))
-            self.incr_bias(u, incr)
+                    print(" Bias increment for {}: {}".format(u, incr))
+                wt_incrs[u][self.input_layer.size] = incr
+                self.incr_bias(u, incr)
         if self.recurrent and self.rectype == 'elman' and delay < 3 and len(self.delayed_activations) > delay+1:
-            self.learn(delay=delay+1, lr=lr, verbose=verbose)
+            self.update_weights(delay=delay+1, lr=lr, verbose=verbose)
 
     def get_input_deltas(self, delay=0):
         if not delay:
@@ -498,6 +566,14 @@ class Layer:
             return self.deltas
         else:
             return self.delayed_deltas[delay-1]
+
+#    def get_act_array(self, delay=0, bias=False):
+#        if delay == 0:
+#            act = self.activations
+#        else:
+#            act = self.delayed_activations[delay-1]
+#        if bias:
+#            act = np.concat
 
     def get_activations(self, delay=0):
         if not delay:
@@ -517,7 +593,16 @@ class Layer:
         else:
             return ia + [1.0]
 
-    def get_input(self, dest_i, verbose=0):
+    def get_input(self, verbose=0):
+        """
+        Calculate the vector of inputs to this layer.
+        """
+        activations = self.input_vector(verbose=verbose)
+        if verbose > 1:
+            print("   Activations {}".format(activations))
+        return activations.dot(self.weights.transpose())
+
+    def get_unit_input(self, dest_i, verbose=0):
         '''Get input into unit dest_i, including [1.0] for bias.'''
         activations = self.input_vector(verbose=verbose)
 #        self.input_layer.activations + [1.0]
@@ -525,19 +610,55 @@ class Layer:
         if verbose > 1:
             print("   Activations: {}".format(activations))
             print("   Weights: {}".format(weights))
+        if self.array:
+            return activations.dot(weights)
         return dot_product(activations, weights)
 
-    def get_error_input(self, dest_i, delay=0):
+    def get_unit_error_input(self, dest_i, delay=0):
         '''Get the error input from the next layer into unit dest_i.'''
         deltas = self.get_input_deltas(delay=delay)
+        if self.array:
+            return deltas.dot(self.get_reverse_weights(dest_i))
         return dot_product(deltas, self.get_reverse_weights(dest_i))
 
-    def update_error(self, delay=0, verbose=1):
+    def update_unit_error(self, unit, delay=0, new_deltas=None, verbose=0):
+#        if self.recurrent and delay > 0:
+#            print("Updating error for recurrent unit {} with new_deltas {}".format(unit, new_deltas))
+        # This is constant for all time steps, so only set it at delay=0
+        error_in = self.get_unit_error_input(unit, delay=delay)
+        act = self.get_activation(unit, delay=delay)
+#        print(" Layer {} updating error for {}; delay {}; slope act {}".format(self, unit, delay, act))
+        self.errors[unit] = error_in
+        new_deltas[unit] = error_in * self.act_slope(act, var=self.act_arg)
+
+    def get_back_weights(self, drop_bias=True):
+        '''
+        Weights connecting this layer to the next layer, needed during backward
+        propagation.
+        '''
+        if self.output_layer:
+            weights = self.output_layer.weights
+            if drop_bias:
+                weights = weights[::,:-1]
+            return weights
+        return []
+
+    def update_error(self, delay=0, verbose=0):
         '''Update unit errors.'''
-#        print("{} updating errors with delay {}".format(self, delay))
-        new_deltas = [0.0 for x in range(self.size)] if delay > 0 else self.deltas
-        for unit in range(self.size):
-            self.update_unit_error(unit, delay=delay, new_deltas=new_deltas, verbose=verbose)
+#        print("** {} updating errors with delay {}".format(self, delay))
+        if self.array:
+            deltas = self.get_input_deltas(delay=delay)
+            # leave off bias weights
+            weights = self.get_back_weights(drop_bias=True)
+            # leave off last element (bias error not needed for backprop)
+            self.errors = deltas.dot(weights) #[:-1]
+            new_deltas = self.errors * self.act_slope(self.activations, var=self.act_arg)
+            if delay == 0:
+                self.deltas = new_deltas
+        else:
+            new_deltas = [0.0 for x in range(self.size)] if delay > 0 else self.deltas
+            for unit in range(self.size):
+                self.update_unit_error(unit, delay=delay, new_deltas=new_deltas, verbose=verbose)
         if self.recurrent:
             deltas = new_deltas[:]
 #            print("Saving recurrent deltas")
@@ -545,29 +666,28 @@ class Layer:
             if delay < 3 and len(self.delayed_activations) > delay+1:
                 self.update_error(delay=delay+1, verbose=verbose)
 
-    def update_unit_error(self, unit, delay=0, new_deltas=None, verbose=0):
-#        if self.recurrent and delay > 0:
-#            print("Updating error for recurrent unit {} with new_deltas {}".format(unit, new_deltas))
-        # This is constant for all time steps, so only set it at delay=0
-        error_in = self.get_error_input(unit, delay=delay)
-        act = self.get_activation(unit, delay=delay)
-#        print(" Layer {} updating error for {}; delay {}; slope act {}".format(self, unit, delay, act))
-        self.errors[unit] = error_in
-        new_deltas[unit] = error_in * self.act_slope(act, var=self.act_arg)
-
     def update(self, verbose=0):
         '''Update unit activations.'''
-        for index in range(self.size):
-            if verbose:
-                print("Updating {}|{}".format(self, index))
-            inp = self.get_input(index, verbose=verbose)
+        if self.array:
+            inp = self.get_input(verbose=verbose)
             if verbose:
                 print(" Input: {}".format(inp))
-            # Apply activation function
-            activation = self.act_function(inp, self.threshold, self.gain, self.act_arg)
-            self.activations[index] = activation
+            activations = self.act_function(inp, self.threshold, self.gain, self.act_arg)
+            self.activations = activations
             if verbose:
-                print(" New activation: {}".format(self.activations[index]))
+                print(" New activations: {}".format(self.activations))
+        else:
+            for index in range(self.size):
+                if verbose:
+                    print("Updating {}|{}".format(self, index))
+                inp = self.get_unit_input(index, verbose=verbose)
+                if verbose:
+                    print(" Input: {}".format(inp))
+                # Apply activation function
+                activation = self.act_function(inp, self.threshold, self.gain, self.act_arg)
+                self.activations[index] = activation
+                if verbose:
+                    print(" New activation: {}".format(self.activations[index]))
 
     def get_bias(self, unit):
         '''The bias into unit.'''
@@ -588,7 +708,8 @@ class Layer:
         '''Print activations.'''
         print(self.name.ljust(12), end=' ')
         for a in self.activations:
-            print('%.3f' % a, end=' ')
+            print("{: .3f}".format(a), end=' ')
+#            print('%.3f' % a, end=' ')
         print()
 
     def show_weights(self):
@@ -597,7 +718,8 @@ class Layer:
         for u in range(self.size):
             print(str(u).ljust(5), end=' ')
             for w in range(len(self.weights[u])):
-                print('%.3f' % self.weights[u][w], end=' ')
+                print("{: .3f}".format(self.weights[u][w]), end=' ')
+#                        %.3f' % self.weights[u][w], end=' ')
             print()
 
     def adam_update(self, gradient):

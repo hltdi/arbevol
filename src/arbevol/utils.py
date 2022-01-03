@@ -175,7 +175,7 @@ def quadratic_slope(out, target):
     return target - out
 
 def cross_entropy(out, target):
-    return target * math.log(out) + (1.0 - target) * math.log(1.0 - out)
+    return target * np.log(out) + (1.0 - target) * np.log(1.0 - out)
 
 # We don't actually need this, since we assume the activation function
 # is sigmoid (and there are problems with division by 0 anyway).
@@ -192,7 +192,7 @@ def linear_slope(inp, slope=1.0):
 
 def sigmoid(inp, thresh, gain, var=None):
     '''Sigmoid function (0 < y < 1) with threshold and gain.'''
-    return 1.0 / (1.0 + math.exp(gain * (-inp + thresh)))
+    return 1.0 / (1.0 + np.exp(gain * (thresh - inp)))
 
 def sigmoid_slope(x, var=None):
     '''Slope of the sigmoid with output x.'''
@@ -200,27 +200,43 @@ def sigmoid_slope(x, var=None):
 
 def tanh(inp, thresh, gain, var=None):
     '''Hyperbolic tangent with threshold and gain.'''
-    return math.tanh(gain * (inp + thresh))
+    return np.tanh(gain * (inp + thresh))
 
 def tanh_slope(x, var=None):
     '''Slope of tanh with output x.'''
     return 1.0 - x * x
 
-def relu(x, thresh=None, gain=None, var=None):
+def relu_(x, thresh=None, gain=None, var=None):
     '''x if x>=0, else 0.'''
-    return x if x >= 0 else 0
+    return x if x >= 0.0 else 0.0
+
+def relu(x, thresh=None, gain=None, var=None):
+    r = np.vectorize(relu_)
+    return r(x)
+
+def relu_slope_(x, var=None):
+    '''1 if x>=0, else 0.'''
+    return 1.0 if x >= 0.0 else 0.0
 
 def relu_slope(x, var=None):
-    '''1 if x>=0, else 0.'''
-    return 1.0 if x >= 0 else 0.0
+    r = np.vectorize(relu_slope_)
+    return r(x)
+
+def leaky_relu_(x, thresh=None, gain=None, var=0.01):
+    '''Var is the slope of the curve for x < 0.'''
+    return x if x >= 0.0 else (var * x)
 
 def leaky_relu(x, thresh=None, gain=None, var=0.01):
+    r = np.vectorize(leaky_relu_)
+    return r(x)
+
+def leaky_relu_slope_(x, var=0.01):
     '''Var is the slope of the curve for x < 0.'''
-    return x if x >= 0 else -var
+    return 1.0 if x >= 0.0 else var
 
 def leaky_relu_slope(x, var=0.01):
-    '''Var is the slope of the curve for x < 0.'''
-    return 1 if x >= 0 else var
+    r = np.vectorize(leaky_relu_slope_)
+    return r(x)
 
 def same_order(s1, s2):
     '''Are the elements in two lists in the same order?'''

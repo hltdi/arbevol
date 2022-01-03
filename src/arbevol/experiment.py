@@ -72,7 +72,7 @@ class Experiment:
             print("Beginning of new sequence")
         return pat, error[0], error[1]
 
-    def run(self, n, train = True):
+    def run(self, n, train=True):
         '''
         Run the Experiment on n patterns, training it and incrementing trials
         if train is True.
@@ -90,7 +90,7 @@ class Experiment:
         '''Test the network on n patterns.'''
         self.current_error = 0.0
         for i in range(n):
-            pat_err_win = self.step(False, show_error = True, show_act = True)
+            pat_err_win = self.step(False, show_error=True, show_act=True)
             self.current_error += pat_err_win[1]
         print('Run error'.ljust(12), end=' ')
         print('%.3f' % (self.current_error / n))
@@ -116,7 +116,7 @@ class Experiment:
         '''Print the target for the pattern.'''
         print('['.rjust(12), end=' ')
         for v in pattern[1]:
-            print('%.3f' % v, end=' ')
+            print("{: .3f}".format(v), end=' ')
         print(']')
 
     def show_weights(self):
@@ -139,7 +139,7 @@ or_bin_x = Experiment('or1', Network('or_pa', layers = [Layer('in', 2, array=Fal
 
 or_bin_xa = Experiment('or1a', Network('or_pa', layers = [Layer('in', 2), Layer('out', 1)]),
                        conditions = [or_bin2])
-# copy the weights from the list network to the array network                       
+# copy the weights from the list network to the array network
 or_bin_xa.network.assign_weights(or_bin_x.network.layers[1].weights[0])
 
 or_sig_x = Experiment('or2', Network('or_pa', layers = [Layer('in', 2, bipolar=False),
@@ -445,14 +445,6 @@ aaabbb_in_x = Experiment('aaabbb in',
                                                Layer('hid', 4, lr=.001),
                                                Layer('out', 2, lr=.001)]),
                       conditions=[aaabbb_in])
-
-#aaabbb_out_x = Experiment('aaabbb out',
-#                      RecurrentNetwork('aaabbb out', reinit_seq=False,
-#                                       layers=[Layer('in', 1),
-#                                               Layer('hid', 4, lr=.003, weight_range=1.0),
-#                                               Layer('out', 2, lr=.003, weight_range=1.0)],
-#                                       source='o'),
-#                      conditions=[aaabbb_out])
 
 # This hard-wired network remembers a feature on the first time step for three
 # more steps, recalling it when a second remember feature is turned on
