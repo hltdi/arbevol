@@ -94,11 +94,12 @@ class PatGen:
                  continuous = True, bipolar = False,  # Kinds of input pattern values
                  default = DEFAULT_ACT,               # Default pattern value
                  filename = None,                     # File to read in patterns from
-                 patterns = [],                       # Explicit list of patterns
+                 patterns = [],                       # Explicit list or array of patterns
                  sequential = False,                  # Whether patterns must appear in order
                  smooth = True,                       # Whether to smooth targets
                  check = True,                        # Whether to check for errors as patters are created
                  random_choice = True,                # Whether to choose patterns randomly
+                 targets = None,                      # Function to generate targets
                  array = True):                       # Whether to create arrays rather than lists
         '''Set pattern parameters and create patterns from patterns list or file.'''
         self.n = n
@@ -120,8 +121,9 @@ class PatGen:
         self.gen_value = lambda: self.gen()
         self.array = array
         self.random_choice = random_choice
-        # only relevant if random_choice is False
+        # only relevant if random_choice is False; keeps track of current pattern
         self.pindex = 0
+        self.targets = targets
         if filename:
             self.read_patterns(filename)
         else:
@@ -270,6 +272,31 @@ class PatGen:
                         pat[i] = random.choice(vals)
                     else:
                         pat[i] = 0 if pat[i] else 1
+
+    def get_targets(self):
+        """
+        The list of target patterns.
+        """
+        if self.targets:
+            return self.targets()
+        elif self.patterns:
+            return [p[1] for p in self.patterns]
+        return None
+
+    def get_nearest(self, pattern, target, verbose=0):
+        """
+        Find the nearest pattern among patterns to patterns,
+        returning that pattern and True if it's target, False if it's not.
+        """
+        targets = self.get_targets()
+        if not targets:
+            print("No targest for get_nearest!")
+            return None, False
+        nearest = nearest_array(pattern, targets)
+#        if verbose:
+#            print("** nearest to {}:\n{}".format(pattern, nearest))
+#            print("** {}".format(nearest is target))
+        return nearest, nearest is target
 
     def __call__(self):
         '''What to do when the object is called.'''

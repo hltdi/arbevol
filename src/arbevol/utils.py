@@ -182,6 +182,26 @@ def cross_entropy(out, target):
 def crossent_slope(out, target):
     return (out - target) / (out * (1.0 - out))
 
+def array_distance(a1, a2):
+    """
+    Euclidean distance between two 1-dimensional arrays.
+    """
+    return np.sqrt(np.sum(np.square(a1 - a2)))
+
+def nearest_array(array, arrays):
+    """
+    Nearest array in arrays to array.
+    """
+    minm = 1000.0
+    closest = None
+    for a in arrays:
+        d = array_distance(array, a)
+#        print("** distance: {}".format(d))
+        if d < minm:
+            minm = d
+            closest = a
+    return closest
+
 # Activation functions
 
 def linear(inp, thresh=None, gain=None, slope=1.0):

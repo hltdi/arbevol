@@ -25,9 +25,9 @@ where "exp" is the name of one of the Experiments.  If it doesn't match any name
 the first Experiment in EXPERIMENTS is loaded.
 '''
 
-from experiment import *
+from lex import *
 
-print("Welcome to መረበኛ, a simple neural network visualization tool.")
+print("Welcome to arbevol, a program for investigating the learning of evolution of words.")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

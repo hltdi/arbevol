@@ -116,7 +116,7 @@ class Network:
         # Update the other layers in sequence
         self.propagate_forward(verbose=verbose)
         # Figure the error into each output unit, given a target sublist
-        if self.supervised and pattern[1]:
+        if self.supervised and pattern[1] is not None:
             # If this is the recurrent layer, also set recurrent deltas
             error += self.layers[-1].do_errors(pattern[1])
             self.target = pattern[1]
@@ -135,6 +135,12 @@ class Network:
 
     def post_stuff(self, target=None):
         pass
+
+    def get_output(self):
+        """
+        Current activation of the output layer.
+        """
+        return self.layers[-1].activations
 
     def show(self, hidden=True):
         '''Print input pattern and output activation, possibly also hidden.'''
@@ -237,7 +243,7 @@ class Layer:
         self.min_activation = -1.0 if bipolar else 0.0
         self.max_activation = 1.0
         self.weight_range = weight_range
-        # Whether to create initial negative weights
+        # Whether to create initial negative weights; don't for relu actfunc
         self.neg_weights = False if self.act_function in (relu, leaky_relu) else True
         # Needed for momentum
         self.momentum = momentum
@@ -400,8 +406,10 @@ class Layer:
 
     def clamp(self, v):
         '''Clamp pattern vector v on this Layer.'''
-        for i in range(min([self.size, len(v)])):
-            self.activations[i] = v[i]
+        # %% OR SHOULD THIS BE A COPY
+        self.activations = v
+#        for i in range(min([self.size, len(v)])):
+#            self.activations[i] = v[i]
 
     def get_unit_output_error(self, targ, act):
         """
@@ -509,9 +517,8 @@ class Layer:
 #        if delay > 0:
 #            print("Updating recurrent weights, delay: {}".format(delay))
         if self.array:
-#            wt_incrs = np.zeros(self.weights.shape)
+            # %% FIGURE OUT HOW TO DO DELAYS
             wt_incrs = lr * self.gradients
-#            wt_copy = np.copy(self.weights)
             if self.momentum:
                 wt_incrs *= self.last_wt_updates
                 self.last_wt_updates = np.copy(wt_incrs)
@@ -523,7 +530,6 @@ class Layer:
                     # Update recurrent weights only
                     recurrent_indices = self.input_layer.recurrent_indices
                     weight_offset = recurrent_indices[0]
-                    last_weight = recurrent_indices[-1]
                     for i in range(len(recurrent_indices)):
                         weight_index = i + weight_offset
                         gradient = self.gradients[u][i]
@@ -708,7 +714,7 @@ class Layer:
         '''Print activations.'''
         print(self.name.ljust(12), end=' ')
         for a in self.activations:
-            print("{: .3f}".format(a), end=' ')
+            print("{: .2f}".format(a), end=' ')
 #            print('%.3f' % a, end=' ')
         print()
 
@@ -718,7 +724,7 @@ class Layer:
         for u in range(self.size):
             print(str(u).ljust(5), end=' ')
             for w in range(len(self.weights[u])):
-                print("{: .3f}".format(self.weights[u][w]), end=' ')
+                print("{: .2f}".format(self.weights[u][w]), end=' ')
 #                        %.3f' % self.weights[u][w], end=' ')
             print()
 
