@@ -7,7 +7,7 @@ from utils import *
 # import numpy as np
 
 # Pattern elements
-DONT_CARE = -100.0
+# DONT_CARE = -100.0
 
 # Noise to add to patterns
 NOISE = .05
@@ -200,14 +200,14 @@ class PatGen:
             self.init_iterator()
             return next(self.iterator) if repeat else False
 
-    def gen(self, repeat=True):
+    def gen(self, repeat=True, index=-1):
         '''
         Generate a pattern. Returns pattern followed by index, representing
         whether this is the end of an epoch.
         '''
         # Call the function
         if self.function:
-            return self.function()
+            return self.function(index=index)
         # Generate a random pattern
         elif (self.ran_prob > 0.0 and random.random() < self.ran_prob) or not self.patterns:
             return self.gen_random(), 0
@@ -298,9 +298,9 @@ class PatGen:
 #            print("** {}".format(nearest is target))
         return nearest, nearest is target
 
-    def __call__(self):
+    def __call__(self, index=-1):
         '''What to do when the object is called.'''
-        return self.gen(True)
+        return self.gen(True, index=index)
 
 class SeqGen:
     '''Generator for sequences of patterns.'''

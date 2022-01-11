@@ -25,9 +25,32 @@ where "exp" is the name of one of the Experiments.  If it doesn't match any name
 the first Experiment in EXPERIMENTS is loaded.
 '''
 
-from lex import *
+from population import *
 
 print("Welcome to arbevol, a program for investigating the learning of evolution of words.")
+
+def make_pops(nmeanings=100, nhid=20, mlength=6, flength=6, noise=0.1,
+              compprob=0.5, prodprob=0.0, mvalues=4):
+    iconpop = Population(2, iconic=True, nmeanings=nmeanings, nhid=nhid,
+                         mlength=mlength, flength=flength, noise=noise,
+                         compprob=compprob, prodprob=prodprob, mvalues=mvalues)
+    arbpop = Population(2, iconic=False, nmeanings=nmeanings, nhid=nhid,
+                        mlength=mlength, flength=flength, noise=noise,
+                        compprob=compprob, prodprob=prodprob, mvalues=mvalues)
+    return iconpop, arbpop
+
+
+def make_exp(nmeanings=25, nhid=10, mlength=6, flength=6, iconpop=None, arbpop=None,
+             noise=0.2, compprob=0.5, prodprob=0.0, mvalues=4):
+    if not iconpop:
+        iconpop, arbpop = make_pops(nmeanings=nmeanings, nhid=nhid,
+                                    mlength=mlength, flength=flength, noise=noise,
+                                    compprob=compprob, prodprob=prodprob, mvalues=mvalues)
+    iconpers = iconpop[1]
+    arbpers = arbpop[1]
+    iconexp = iconpers.make_experiment()
+    arbexp = arbpers.make_experiment()
+    return iconexp, arbexp
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

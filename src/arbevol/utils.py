@@ -9,9 +9,95 @@ VERBOSE = True
 
 LUCE_EPS = 0.01
 
+DONT_CARE = -100.0
+
+DFLT_SD = 0.1
+
 import os, tarfile, math, random, sys, getopt, re
 import numpy as np
 from functools import reduce
+
+## ARRAYS
+
+def noisify(array, sd=DFLT_SD, indices=None):
+    if indices:
+        # Only noisify position from start to end
+        start, end = indices
+        array = np.copy(array)
+        for index in range(start, end):
+            array[index] += np.random.normal(0.0, sd)
+        return array
+    func = np.vectorize(lambda x: noisify1(x, sd=sd))
+    return func(array)
+
+def noisify1(value, sd=DFLT_SD):
+    return value + np.random.normal(0.0, sd)
+
+def gen_value_opts(nvalues):
+    interval = 1.0 / (nvalues-1.0)
+    return [i * interval for i in range(nvalues)]
+
+def gen_value_probs(nvalues):
+    """
+    For nvalues values between 0 and 1, return the list of possible values
+    and associated probability totals.
+    """
+    minval = 1.0 / nvalues
+    interval = 1.0 / (nvalues-1.0)
+    return [(i * interval, (i+1) * minval) for i in range(nvalues)[:-1]]
+
+def gen_value(nvalues, i, spec=None, values=None):
+    if spec and i in spec:
+        return spec[i]
+    if not values:
+        minval = 1.0 / nvalues
+        interval = 1.0 / (nvalues-1.0)
+        values = [(i * interval, (i+1) * minval) for i in range(nvalues)[:-1]]
+    ran = np.random.rand()
+    for v1, v2 in values:
+#            print("{}, {}, {}".format(v1, v2, ran))
+        if ran < v2:
+            return v1
+    return 1.0
+
+# def gen_value(nvalues):
+#     ran = np.random.rand()
+#     minval = 1.0 / nvalues
+#     interval = 1.0 # / (nvalues-1.0)
+#     values = [(i * interval, (i+1) * minval) for i in range(nvalues)[:-1]]
+#     for v1, v2 in values:
+# #        print("{}, {}, {}".format(v1, v2, ran))
+#         if ran < v2:
+#             return v1
+#     return (nvalues-1) * interval
+
+def gen_array(nvalues, length, spec=None):
+    '''
+    If spec is not None, it is a dict specifying values in particular positions.
+    All other positions are generated randomly.
+    '''
+    values = gen_value_probs(nvalues)
+    iter = (gen_value(nvalues, i, spec=spec, values=values) for i in range(length))
+    return np.fromiter(iter, float)
+
+def gen_list(nvalues, length, spec=None):
+    return [gen_value(nvalues, i, spec=spec) for i in range(length)]
+
+def gen_novel_array(nvalues, length, spec=None, existing=None):
+    """
+    Generate an array for the given specs that is not in the existing list.
+    """
+    while True:
+        found = True
+        newa = gen_array(nvalues, length)
+        if not existing:
+            return newa
+        for olda in existing:
+            if (newa == olda).all():
+                found = False
+                break
+        if found:
+            return newa
 
 def l2a(lst):
     """
@@ -165,6 +251,29 @@ def threshold(inp, thresh, min_val, max_val):
     else:
         return min_val
 
+def cornersL(dims=6):
+    """
+    Return lists for all of the corners of the dims-dimension space:
+    2^dims values.
+    """
+    if dims==0:
+        return []
+    elif dims==1:
+        return [[0.0], [1.0]]
+    result = []
+    corners1 = cornersL(dims=dims-1)
+    new0 = [[0.0] + c for c in corners1]
+    new1 = [[1.0] + c for c in corners1]
+    result.extend(new0)
+    result.extend(new1)
+    return result
+
+def cornersA(dims=6):
+    """
+    Array version of cornersL.
+    """
+    return [np.array(l) for l in cornersL(dims=dims)]
+
 # Error functions
 
 def quadratic(out, target):
@@ -182,11 +291,24 @@ def cross_entropy(out, target):
 def crossent_slope(out, target):
     return (out - target) / (out * (1.0 - out))
 
+def diff2_dont_care(a1, a2):
+    """
+    Difference between two arrays, ignoring positions where one or other
+    value is DONT_CARE, as could happen if a1 or a2 is a target pattern.
+    """
+    def diffNCelem(x, y):
+        if x == DONT_CARE or y == DONT_CARE:
+            return 0.0
+        else:
+            return x-y
+    return np.vectorize(diffNCelem)(a1, a2)
+
 def array_distance(a1, a2):
     """
     Euclidean distance between two 1-dimensional arrays.
     """
-    return np.sqrt(np.sum(np.square(a1 - a2)))
+    return np.sqrt(np.sum(np.square(diff2_dont_care(a1, a2))))
+#    a1 - a2)))
 
 def nearest_array(array, arrays):
     """
@@ -194,12 +316,15 @@ def nearest_array(array, arrays):
     """
     minm = 1000.0
     closest = None
+#    print("** Closest for {}".format(array))
     for a in arrays:
         d = array_distance(array, a)
-#        print("** distance: {}".format(d))
+#        print("**  checking {}".format(a))
+#        print("**  distance: {}".format(d))
         if d < minm:
             minm = d
             closest = a
+#    print("** winner: {}".format(closest))
     return closest
 
 # Activation functions

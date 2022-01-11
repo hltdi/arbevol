@@ -37,7 +37,7 @@ EXPERIMENTS = {}
 class Experiment:
     '''A Network with a set of conditions, each with a separate pattern generator.'''
 
-    def __init__(self, name, network, conditions = None, training=True,
+    def __init__(self, name, network, conditions=None, training=True,
                  test_nearest=False, verbose=0):
         '''Initialize name, network, learning rate, conditions, error; add to EXPERIMENTS.'''
         self.network = network
@@ -48,20 +48,25 @@ class Experiment:
         self.condition = 0
         self.current_error = 0.0
         self.conditions = conditions
-        self.pat_gen = self.conditions[0][0]
-        self.test_pat_gen = self.conditions[0][-1]
+#        self.pat_gen = self.conditions[0][0]
+#        self.test_pat_gen = self.conditions[0][-1]
         self.verbose = verbose
         self.training = training
         self.test_nearest = test_nearest
         EXPERIMENTS[name] = self
 
-    def step(self, train=True, show_error=False, show_act=False, verbose=0):
+    def step(self, train=True, patgen=None, show_error=False, show_act=False,
+             pg_kind='full', index=-1, verbose=0):
         '''
         Run the Experiment on one pattern, return the target pattern, error.
         '''
         # The next pattern and an integer indicating whether this is the last pattern
         # in a sequence (1) and/or the last pattern or sequence in an epoch (2)
-        pat, seqfirst = self.pat_gen()
+        if not patgen:
+            patgen = self.get_patgen(train=train, kind=pg_kind)
+        pat, seqfirst = patgen(index=index)
+        if not pat:
+            return pat, 0.0, 0,0
         error = self.network.step(pat, train, show_act, seqfirst=seqfirst, verbose=verbose)
         if self.training and train:
             self.errors.append(error[0])
@@ -75,34 +80,74 @@ class Experiment:
             print("Beginning of new sequence")
         return pat, error[0], error[1]
 
-    def run(self, n, train=True):
+    def run(self, n, train=True, show_act=False):
         '''
         Run the Experiment on n patterns, training it and incrementing trials
         if train is True.
         '''
         self.current_error = 0.0
         trial0 = self.trials
+        patgen = self.get_patgen(train=train)
         for i in range(n):
-            pat_err_win = self.step(train, show_error = False)
+            pat_err_win = self.step(train, patgen=patgen, show_act=show_act,
+                                    show_error=False)
             self.current_error += pat_err_win[1]
         print(self.trials, 'trials')
         print('Run error:', end=' ')
         print('%.3f' % (self.current_error / n))
 
-    def test(self, n, verbose=1):
+    def test_all(self, pg_kind='full', verbose=0):
+        '''Test the network on all patterns.'''
+        self.current_error = 0.0
+        nearest_misses = 0
+        nearest_error = 0.0
+        patgen = self.get_patgen(train=False, kind=pg_kind)
+        pindex = 0
+        while True:
+            pat_err_win = self.step(False, patgen=patgen, index=pindex,
+                                    show_error=verbose>0, show_act=verbose>0)
+#            print("pindex {}, pat_err_win {}".format(pindex, pat_err_win))
+            if not pat_err_win[0]:
+                # step() returns empty pattern for this pindex
+                break
+            pindex += 1
+            self.current_error += pat_err_win[1]
+            if self.test_nearest:
+                target = pat_err_win[0][1]
+                hit = self.nearest(target, patgen, verbose=verbose)
+                if not hit:
+                    nearest_misses += 1
+                    if verbose:
+                        print("MISSED target category")
+                elif verbose:
+                    print("HIT target category")
+        # At this point pindex is number of test patterns
+        run_error = self.current_error / pindex
+        print('Run error'.ljust(12), end=' ')
+        print("{: .3f}".format(run_error))
+        if self.test_nearest:
+            nearest_error = nearest_misses / pindex
+            print("Nearest error: {: .2f}".format(nearest_error))
+        return run_error, nearest_error
+
+    def test(self, n, pg_kind='full', verbose=1):
         '''Test the network on n patterns.'''
         self.current_error = 0.0
         nearest_misses = 0
         nearest_error = 0.0
+        patgen = self.get_patgen(train=False, kind=pg_kind)
         for i in range(n):
-            pat_err_win = self.step(False, show_error=verbose>0, show_act=verbose>0)
+            pat_err_win = self.step(False, patgen=patgen, show_error=verbose>0, show_act=verbose>0)
             self.current_error += pat_err_win[1]
             if self.test_nearest:
                 target = pat_err_win[0][1]
-                hit = self.nearest(target, verbose=verbose)
+                hit = self.nearest(target, patgen, verbose=verbose)
                 if not hit:
                     nearest_misses += 1
-#                    print("Hit!")
+                    if verbose:
+                        print("MISSED target category")
+                elif verbose:
+                    print("HIT target category")
         run_error = self.current_error / n
         print('Run error'.ljust(12), end=' ')
         print("{: .3f}".format(run_error))
@@ -111,12 +156,13 @@ class Experiment:
             print("Nearest error: {: .2f}".format(nearest_error))
         return run_error, nearest_error
 
-    def nearest(self, target, verbose=0):
+    def nearest(self, target, patgen, test=True, verbose=0):
         """
         Whether the current output is closer to target than any other pattern.
         """
         output = self.network.get_output()
-        nearest, correct = self.pat_gen.get_nearest(output, target, verbose=verbose)
+#        patgen = self.test_pat_gen if test else self.pat_gen
+        nearest, correct = patgen.get_nearest(output, target, verbose=verbose)
         return correct
 
     def reinit(self):
@@ -132,6 +178,24 @@ class Experiment:
             self.reinit()
             print('Changing to experiment condition', self.condition)
 
+    def get_patgen(self, train=True, kind=''):
+        """
+        Get the current pattern generation for training or testing.
+        kind is a string that is used if there is a dict of different
+        PatGens.
+        """
+        condition = self.conditions[self.condition]
+        # Condition is a pair: training, testing
+        patgen = condition[0] if train else condition[1]
+        if isinstance(patgen, dict):
+            if kind:
+                return patgen[kind]
+            else:
+                # kind not specified, get first patgen found
+                return list(patgen.values())[0]
+        # only one patgen specified
+        return patgen
+
     def show(self):
         '''Print activations for output layer of network.'''
         self.network.show()
@@ -140,7 +204,10 @@ class Experiment:
         '''Print the target for the pattern.'''
         print('['.rjust(12), end=' ')
         for v in pattern[1]:
-            print("{: .2f}".format(v), end=' ')
+            if v == DONT_CARE:
+                print(" X   ", end=' ')
+            else:
+                print("{: .2f}".format(v), end=' ')
         print(']')
 
     def show_weights(self):

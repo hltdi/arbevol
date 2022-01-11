@@ -27,7 +27,7 @@ def random_weight(wt_range, neg=True):
 
 class Network:
 
-    LR = .05
+    LR = 0.1
 
     def __init__(self, name, layers, array=True, supervised=True, verbose=0):
         '''
@@ -209,7 +209,7 @@ class Layer:
         self.errors = []
         self.deltas = []
         self.gain = gain
-        self.lr = lr or .05
+        self.lr = lr or 0.1
         # Only needed for leaky RELU
         self.act_arg = None
         self.array = array
