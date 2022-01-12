@@ -25,7 +25,7 @@ class Population(list):
             self.add()
 
     def add(self):
-        self.append(Person(self, teacher=Person.n==0))
+        self.append(Person(self, teacher=not self))
 
     def make_environment(self):
         """
@@ -49,12 +49,13 @@ class Person:
         else:
             self.network = self.make_network(population.mlength, population.flength, population.nhid)
         # Create an initial lexicon for teachers
-#        if teacher:
-        self.lexicon = self.make_lexicon(iconic=population.iconic,
-                                         compprob=population.compprob,
-                                         prodprob=population.prodprob)
-#        else:
-#            self.lexicon = None
+        if teacher:
+            self.lexicon = \
+            self.make_lexicon(iconic=population.iconic,
+                              compprob=population.compprob,
+                              prodprob=population.prodprob)
+        else:
+            self.lexicon = None
 
     def __repr__(self):
         return ":-){}".format(self.id)
@@ -74,15 +75,16 @@ class Person:
 
     def make_experiment(self, name='lex_exp'):
         return Experiment(name, network=self.network,
-                          conditions=[[self.lexicon.patfunc,
-#                                       self.lexicon.testpatfunc
-                                       {'comp': self.lexicon.comppatfunc,
-                                       'prod': self.lexicon.prodpatfunc,
-                                       'full': self.lexicon.testpatfunc}
-                                       ]],
+                          conditions=self.lexicon.exp_conds,
                           test_nearest=True)
 
-    def teach(self, student):
+    def teach(self, student, comptrain=1.0, prodtrain=0.0):
         """
         Present training patterns to Person student.
         """
+        name = 'Teaching'
+        conditions = self.lexicon.spec_exp_conditions(comptrain, prodtrain)
+        exp = Experiment(name, network=student.network,
+                         conditions=conditions,
+                         test_nearest=True)
+        return exp

@@ -39,7 +39,7 @@ class Environment:
                     break
             if not found:
                 continue
-            meaning = Meaning(meaning)
+            meaning = Meaning(meaning, nvalues=self.mvalues)
             self.meanings.append(meaning)
             return meaning
 

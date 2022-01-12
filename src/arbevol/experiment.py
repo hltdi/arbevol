@@ -53,10 +53,14 @@ class Experiment:
         self.verbose = verbose
         self.training = training
         self.test_nearest = test_nearest
+        self.time = time.strftime("%y%m%d.%H%M")
         EXPERIMENTS[name] = self
 
+    def __repr__(self):
+        return "{}:{}".format(self.name, self.time)
+
     def step(self, train=True, patgen=None, show_error=False, show_act=False,
-             pg_kind='full', index=-1, verbose=0):
+             pg_kind='full', index=-1, record=None, verbose=0):
         '''
         Run the Experiment on one pattern, return the target pattern, error.
         '''
@@ -68,6 +72,14 @@ class Experiment:
         if not pat:
             return pat, 0.0, 0,0
         error = self.network.step(pat, train, show_act, seqfirst=seqfirst, verbose=verbose)
+        if record != None and index >= 0:
+            net_out = self.network.layers[-1].activations
+            target = pat[1]
+            record_out = np.array([a for a, t in zip(net_out, target) if t != NO_TARGET])
+            if index not in record:
+                record[index] = record_out
+            else:
+                record[index] += record_out
         if self.training and train:
             self.errors.append(error[0])
             self.trials += 1
@@ -96,39 +108,60 @@ class Experiment:
         print('Run error:', end=' ')
         print('%.3f' % (self.current_error / n))
 
-    def test_all(self, pg_kind='full', verbose=0):
-        '''Test the network on all patterns.'''
+    def test_all(self, pg_kind='full', reps=2, record=False, verbose=0):
+        '''Test the network on all patterns reps times.'''
         self.current_error = 0.0
         nearest_misses = 0
         nearest_error = 0.0
         patgen = self.get_patgen(train=False, kind=pg_kind)
-        pindex = 0
-        while True:
-            pat_err_win = self.step(False, patgen=patgen, index=pindex,
-                                    show_error=verbose>0, show_act=verbose>0)
-#            print("pindex {}, pat_err_win {}".format(pindex, pat_err_win))
-            if not pat_err_win[0]:
-                # step() returns empty pattern for this pindex
-                break
-            pindex += 1
-            self.current_error += pat_err_win[1]
-            if self.test_nearest:
-                target = pat_err_win[0][1]
-                hit = self.nearest(target, patgen, verbose=verbose)
-                if not hit:
-                    nearest_misses += 1
-                    if verbose:
-                        print("MISSED target category")
-                elif verbose:
-                    print("HIT target category")
+        pindex_errors = {}
+        recorded = {}
+        for repetition in range(reps):
+            pindex = 0
+            while True:
+                pat_err_win = self.step(False, patgen=patgen, index=pindex,
+                                        record=recorded if record else None,
+                                        show_error=verbose>0, show_act=verbose>0)
+                if not pat_err_win[0]:
+                    # step() returns empty pattern for this pindex
+                    break
+                self.current_error += pat_err_win[1]
+                if self.test_nearest:
+                    target = pat_err_win[0][1]
+                    hit = self.nearest(target, patgen, verbose=verbose)
+                    if not hit:
+                        nearest_misses += 1
+                        if pindex not in pindex_errors:
+                            pindex_errors[pindex] = 0
+                        pindex_errors[pindex] += 1
+                        if verbose:
+                            print("MISSED target category")
+                    elif verbose:
+                        print("HIT target category")
+                # if record:
+                #     response = self.network.layers[-1].activations
+                #     if pindex not in recorded:
+                #         recorded[pindex] = response
+                #     else:
+                #         recorded[pindex] += response
+                pindex += 1
+
+        nitems = pindex * reps
+#        print("N items: {}".format(nitems))
         # At this point pindex is number of test patterns
-        run_error = self.current_error / pindex
+        run_error = self.current_error / nitems
         print('Run error'.ljust(12), end=' ')
         print("{: .3f}".format(run_error))
         if self.test_nearest:
-            nearest_error = nearest_misses / pindex
+            nearest_error = nearest_misses / nitems
+            for i in pindex_errors:
+                pindex_errors[i] /= reps
             print("Nearest error: {: .2f}".format(nearest_error))
-        return run_error, nearest_error
+        if record:
+            for i in recorded:
+                recorded[i] /= reps
+                recorded[i] = np.round_(recorded[i], 2)
+        return run_error, nearest_error, pindex_errors, recorded
 
     def test(self, n, pg_kind='full', verbose=1):
         '''Test the network on n patterns.'''
