@@ -15,13 +15,20 @@ class Environment:
         self.mvalues = mvalues
         self.mlength = mlength
         self.mspec = mspec
-        self.nmeanings = nmeanings
+        maxn = self.max_nmeanings()
+        print("Creating environment: mlength {}, mvalues {}, max {} meanings".format(mlength, mvalues, maxn))
+        self.nmeanings = round(maxn / 2)
         self.meanings = []
-        self.init_meanings(nmeanings)
+        # Meanings grouped by cluster
+        self.clusters = []
+        self.init_meanings(self.nmeanings)
 
     def init_meanings(self, n):
         for i in range(n):
             self.make_meaning(self.mspec)
+
+    def max_nmeanings(self):
+        return np.power(self.mvalues, self.mlength)
 
     def make_meaning(self, spec=None):
         """
@@ -58,7 +65,7 @@ class Meaning(np.ndarray):
      each element one dimension with nvalues possible values.
      """
 
-     pre = "%"
+     pre = "M"
 
      def __new__(cls, input_array, nvalues=3, spec=None):
          a = np.asarray(input_array).view(cls)
@@ -70,11 +77,26 @@ class Meaning(np.ndarray):
          self.nvalues = getattr(obj, 'nvalues', None)
 
      def __repr__(self):
+         if not self.shape:
+             # The meaning somehow ended up scalar
+             return "{}".format(float(self))
          s = Meaning.pre
-         mult = self.nvalues - 1
+#         mult = self.nvalues - 1
          for value in self:
-             if value < 0.1:
-                 value = 0.0
-             value = int(mult * value)
-             s += str(value)
+#             if value < 0.1:
+#                 value = 0.0
+#             value = int(mult * value)
+             value = round(100 * value)
+             s += "{:> 4}".format(value)
+         return s
+
+     def __str__(self):
+         s = Meaning.pre
+#         mult = self.nvalues - 1
+         for value in self:
+#             if value < 0.1:
+#                 value = 0.0
+#             value = int(mult * value)
+             value = round(100 * value)
+             s += "{:> 4}".format(value)
          return s

@@ -83,7 +83,7 @@ def gen_array(nvalues, length, spec=None):
 def gen_list(nvalues, length, spec=None):
     return [gen_value(nvalues, i, spec=spec) for i in range(length)]
 
-def gen_novel_array(nvalues, length, spec=None, existing=None):
+def gen_novel_array(nvalues, length, spec=None, existing=None, thresh=0.5):
     """
     Generate an array for the given specs that is not in the existing list.
     """

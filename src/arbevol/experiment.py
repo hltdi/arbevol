@@ -38,7 +38,7 @@ class Experiment:
     '''A Network with a set of conditions, each with a separate pattern generator.'''
 
     def __init__(self, name, network, conditions=None, training=True,
-                 test_nearest=False, verbose=0):
+                 test_nearest=False, record_only_hits=True, verbose=0):
         '''Initialize name, network, learning rate, conditions, error; add to EXPERIMENTS.'''
         self.network = network
         self.name = name
@@ -53,6 +53,8 @@ class Experiment:
         self.verbose = verbose
         self.training = training
         self.test_nearest = test_nearest
+        # Record only hits
+        self.record_only_hits = record_only_hits
         self.time = time.strftime("%y%m%d.%H%M")
         EXPERIMENTS[name] = self
 
@@ -60,7 +62,7 @@ class Experiment:
         return "{}:{}".format(self.name, self.time)
 
     def step(self, train=True, patgen=None, show_error=False, show_act=False,
-             pg_kind='full', index=-1, record=None, verbose=0):
+             pg_kind='full', lr=None, index=-1, verbose=0):
         '''
         Run the Experiment on one pattern, return the target pattern, error.
         '''
@@ -71,15 +73,9 @@ class Experiment:
         pat, seqfirst = patgen(index=index)
         if not pat:
             return pat, 0.0, 0,0
-        error = self.network.step(pat, train, show_act, seqfirst=seqfirst, verbose=verbose)
-        if record != None and index >= 0:
-            net_out = self.network.layers[-1].activations
-            target = pat[1]
-            record_out = np.array([a for a, t in zip(net_out, target) if t != NO_TARGET])
-            if index not in record:
-                record[index] = record_out
-            else:
-                record[index] += record_out
+        error = \
+        self.network.step(pat, train, show_act, seqfirst=seqfirst,
+                          lr=lr, verbose=verbose)
         if self.training and train:
             self.errors.append(error[0])
             self.trials += 1
@@ -92,7 +88,7 @@ class Experiment:
             print("Beginning of new sequence")
         return pat, error[0], error[1]
 
-    def run(self, n, train=True, show_act=False):
+    def run(self, n, train=True, lr=None, show_act=False):
         '''
         Run the Experiment on n patterns, training it and incrementing trials
         if train is True.
@@ -101,12 +97,13 @@ class Experiment:
         trial0 = self.trials
         patgen = self.get_patgen(train=train)
         for i in range(n):
-            pat_err_win = self.step(train, patgen=patgen, show_act=show_act,
-                                    show_error=False)
+            pat_err_win = self.step(train, patgen=patgen, lr=lr,
+                                    show_act=show_act, show_error=False)
             self.current_error += pat_err_win[1]
+        error = self.current_error / n
         print(self.trials, 'trials')
-        print('Run error:', end=' ')
-        print('%.3f' % (self.current_error / n))
+        print('Run error: {:.3f}'.format(error))
+        return error
 
     def test_all(self, pg_kind='full', reps=2, record=False, verbose=0):
         '''Test the network on all patterns reps times.'''
@@ -120,7 +117,6 @@ class Experiment:
             pindex = 0
             while True:
                 pat_err_win = self.step(False, patgen=patgen, index=pindex,
-                                        record=recorded if record else None,
                                         show_error=verbose>0, show_act=verbose>0)
                 if not pat_err_win[0]:
                     # step() returns empty pattern for this pindex
@@ -138,12 +134,13 @@ class Experiment:
                             print("MISSED target category")
                     elif verbose:
                         print("HIT target category")
-                # if record:
-                #     response = self.network.layers[-1].activations
-                #     if pindex not in recorded:
-                #         recorded[pindex] = response
-                #     else:
-                #         recorded[pindex] += response
+                    if record != None and pindex >= 0 and (hit or not self.record_only_hits):
+                        net_out = self.network.layers[-1].activations
+                        record_out = np.array([a for a, t in zip(net_out, target) if t != NO_TARGET])
+                        if pindex not in recorded:
+                            recorded[pindex] = record_out
+                        else:
+                            recorded[pindex] += record_out
                 pindex += 1
 
         nitems = pindex * reps

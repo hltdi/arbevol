@@ -142,6 +142,11 @@ class Network:
         """
         return self.layers[-1].activations
 
+    def set_lr(self, lr):
+        """Set or change the learning rate for all trained layers."""
+        for layer in self.layers[:1]:
+            layer.lr = lr
+
     def show(self, hidden=True):
         '''Print input pattern and output activation, possibly also hidden.'''
         self.layers[0].show()
@@ -209,7 +214,7 @@ class Layer:
         self.errors = []
         self.deltas = []
         self.gain = gain
-        self.lr = lr or 0.1
+        self.lr = lr or Network.LR
         # Only needed for leaky RELU
         self.act_arg = None
         self.array = array
@@ -514,6 +519,7 @@ class Layer:
 #            if grad_norm > self.grad_clip:
 #                self.clip_gradients(grad_norm)
         lr = lr or self.lr
+#        print("LR {}".format(lr))
 #        if delay > 0:
 #            print("Updating recurrent weights, delay: {}".format(delay))
         if self.array:

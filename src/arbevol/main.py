@@ -29,19 +29,25 @@ from population import *
 
 print("Welcome to arbevol, a program for investigating the learning of evolution of words.")
 
-def init_pop(nmeanings=10, nhid=10, mlength=5, flength=5, noise=0.05, mvalues=5):
-    pop = Population(3, iconic=True, nmeanings=nmeanings, nhid=nhid,
+def init_pop(nmeanings=20, nhid=10, mlength=5, flength=5, noise=0.05, mvalues=5, iconic=False):
+    pop = Population(4, iconic=iconic, nmeanings=nmeanings, nhid=nhid,
                      mlength=mlength, flength=flength, noise=noise, mvalues=mvalues)
     return pop
 
-def teach(population=None, nmeanings=10, nhid=10, mlength=5, flength=5, noise=0.05, mvalues=5,
-          comptrain=1.0, prodtrain=0.0):
-    population = population or Population(3, iconic=True, nmeanings=nmeanings,
-                                          mlength=mlength, flength=flength,
+def teach(population=None, tindex=0, sindex=1, popsize=10,
+          nmeanings=20, nhid=20, mlength=5, flength=4, noise=0.05, mvalues=4,
+          comptrain=0.33, prodtrain=0.33, iconic=True):
+    population = population or Population(popsize, iconic=iconic, nmeanings=nmeanings,
+                                          mlength=mlength, flength=flength, nhid=nhid,
                                           noise=noise, mvalues=mvalues)
-    teacher = population[0]
-    student = population[1]
-    return teacher, student, teacher.teach(student, comptrain=comptrain, prodtrain=prodtrain)
+    teacher = population[tindex]
+    student = population[sindex]
+    return teacher.teach(student, comptrain=comptrain, prodtrain=prodtrain)
+
+#def teach2(population, tindex, sindex, comptrain=0.333, prodtrain=0.333):
+#    teacher = population[tindex]
+#    student = population[sindex]
+#    return teacher.teach(student, comptrain=comptrain, prodtrain=prodtrain)
 
 def make_pops(nmeanings=12, nhid=8, mlength=4, flength=4, noise=0.05,
               compprob=1.0, prodprob=0.0, mvalues=5):
@@ -56,13 +62,19 @@ def make_pops(nmeanings=12, nhid=8, mlength=4, flength=4, noise=0.05,
 def make_pops1():
     '''
     These values, trained for at least 5000 trials, reproduce the results of Gasser (2004).
+    ip, ap = make_pops1()
+    ie, ae = make_exp(iconpop=ip, arbpop=ap)
+    ie.run(10000)
+    ae.run(10000)
+    ie.test('comp')
+    ae.test('comp')
     '''
     return make_pops(nmeanings=12, nhid=8, mlength=4, flength=4, noise=0.05,
                      compprob=1.0, prodprob=0.0, mvalues=5)
 
 
 def make_exp(nmeanings=50, nhid=10, mlength=5, flength=5, iconpop=None, arbpop=None,
-             noise=0.1, comptrain=1.5, prodtrain=0.0, mvalues=4):
+             noise=0.1, comptrain=1.0, prodtrain=0.0, mvalues=4):
     if not iconpop:
         iconpop, arbpop = make_pops(nmeanings=nmeanings, nhid=nhid,
                                     mlength=mlength, flength=flength, noise=noise,
