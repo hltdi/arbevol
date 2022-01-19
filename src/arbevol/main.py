@@ -29,14 +29,14 @@ from population import *
 
 print("Welcome to arbevol, a program for investigating the learning of evolution of words.")
 
-def init_pop(nmeanings=20, nhid=10, mlength=5, flength=5, noise=0.05, mvalues=5, iconic=False):
+def init_pop(nmeanings=20, nhid=20, mlength=5, flength=5, noise=0.05, mvalues=4, iconic=True):
     pop = Population(4, iconic=iconic, nmeanings=nmeanings, nhid=nhid,
                      mlength=mlength, flength=flength, noise=noise, mvalues=mvalues)
-    return pop
+    return pop[0]
 
 def teach(population=None, tindex=0, sindex=1, popsize=10,
           nmeanings=20, nhid=20, mlength=5, flength=4, noise=0.05, mvalues=4,
-          comptrain=0.33, prodtrain=0.33, iconic=True):
+          comptrain=0.5, prodtrain=0.5, iconic=True):
     population = population or Population(popsize, iconic=iconic, nmeanings=nmeanings,
                                           mlength=mlength, flength=flength, nhid=nhid,
                                           noise=noise, mvalues=mvalues)

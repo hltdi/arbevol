@@ -29,7 +29,8 @@ class Network:
 
     LR = 0.1
 
-    def __init__(self, name, layers, array=True, supervised=True, verbose=0):
+    def __init__(self, name, layers, array=True, supervised=True,
+                 initialized=False, verbose=0):
         '''
         Initialize, creating input, hidden, and output Layers and weights.
         '''
@@ -44,10 +45,18 @@ class Network:
         self.target = []
         self.array = array
         self.verbose = verbose
-        self.initialize()
+        # Whether this is joint network, composed of two interconnected networks
+        self.joint = False
+        # Lower network and upper network layers to be reconnected
+        self.joint_reconnect = None
+        # Whether this joint network, or lower network that is part of joint network,
+        # is properly connected
+        self.connected = True
+        if not initialized:
+            self.initialize()
 
     def __repr__(self):
-        return "<<" + self.name + ">>"
+        return "<< " + self.name + " >>"
 
     def initialize(self):
         '''
@@ -160,6 +169,50 @@ class Network:
         for l in self.layers[1:]:
             l.show_weights()
 
+    @staticmethod
+    def join(network1, network2):
+        """
+        Combine networks. Output layer of network1 must match input
+        layer of network2 in units.
+        """
+        if network1.layers[-1].size != network2.layers[0].size:
+            print("Can't combine incompatible networks {} and {}".format(network1, network2))
+            return
+        hid1 = network1.layers[-2]
+        top1 = network1.layers[-1]
+        bottom2 = network2.layers[0]
+        layers = network1.layers[:-1] + network2.layers
+        network = Network("{}++{}".format(network1, network2),
+                          layers, initialized=True)
+        bottom2.connect(hid1)
+        network.joint = True
+        network.joint_reconnect = (hid1, bottom2)
+        network.connected = True
+        network1.connected = False
+        # Needed so we can reset it before training testing network 1
+#        hid1._layer = top1
+        bottom2.weights = top1.weights
+        bottom2.errors = np.copy(top1.errors)
+        bottom2.deltas = np.copy(top1.deltas)
+        return network
+
+    def reconnect(self, other):
+        """
+        Reconnect joint network or joint network component.
+        """
+        if self.connected:
+            # No need to reconnect
+            return
+        if self.joint:
+            hid, top = self.joint_reconnect
+        else:
+            top = self.layers[-1]
+            hid = self.layers[-2]
+        print("Reconnecting {} with {}".format(top, hid))
+        top.connect(hid)
+        other.connected = False
+        self.connected = True
+
 class Layer:
     '''A group of units and the weights into them. May be a recurrent layer.'''
 
@@ -184,6 +237,7 @@ class Layer:
                  spec_weights = None, # initial weights to use instead of random ones
                  gain=1.0,            # gain for the activation function (if non-linear)
                  lr=None,             # learning rate
+                 do_update=True,      # whether to update weights into layer
                  momentum=0,          # momentum if is to be used
                  grad_clip=2.0,       # clip gradient norm here
                  error_func='xent',   # error function: quadratic or cross-entropy
@@ -202,9 +256,10 @@ class Layer:
         self.recurrent = False
         self.rectype = None
         # Layer feeding this layer
-        self.input_layer = []
+        self.input_layer = None
         # Layer fed from this layer
-        self.output_layer = []
+        self.output_layer = None
+#        self.tmp_output_layer = None
         self.spec_weights = spec_weights
         self.weights = []
         self.gradients = []
@@ -215,6 +270,7 @@ class Layer:
         self.deltas = []
         self.gain = gain
         self.lr = lr or Network.LR
+        self.do_update = do_update
         # Only needed for leaky RELU
         self.act_arg = None
         self.array = array
@@ -288,13 +344,15 @@ class Layer:
 
     def set_errors(self):
         '''Set the errors for the units.'''
-        e = [0.0 for u in range(self.size)]
-        d = [0.0 for u in range(self.size)]
-        if self.array:
-            e = l2a(e)
-            d = l2a(d)
-        self.errors = e
-        self.deltas = d
+        e = np.zeros(self.size)
+        d = np.zeros(self.size)
+#        [0.0 for u in range(self.size)]
+#        d = [0.0 for u in range(self.size)]
+#        if self.array:
+#            e = l2a(e)
+#            d = l2a(d)
+        self.errors = np.zeros(self.size)
+        self.deltas = np.zeros(self.size)
 
     def initialize_weights(self):
         '''
@@ -433,42 +491,42 @@ class Layer:
         Figure the errors for each (output) unit, given the target pattern
         (list), returning RMS error.
         '''
-        if self.array:
-            self.errors = self.get_unit_output_error_array(target, self.activations)
-            if self.error_function == cross_entropy:
-                np.copyto(self.deltas, self.errors)
-            else:
-                self.deltas = self.errors * self.act_slope(self.activations, var=self.act_arg)
-            return math.sqrt(np.sum(self.errors * self.errors) / self.size)
+#        if self.array:
+        self.errors = self.get_unit_output_error_array(target, self.activations)
+        if self.error_function == cross_entropy:
+            np.copyto(self.deltas, self.errors)
+        else:
+            self.deltas = self.errors * self.act_slope(self.activations, var=self.act_arg)
+        return math.sqrt(np.sum(self.errors * self.errors) / self.size)
 
-        error = 0.0
-        for i in range(self.size):
-            targ = target[i]
-            act = self.activations[i]
-            e = 0.0 if (targ == NO_TARGET) else (targ - act)
-            self.errors[i] = e
-            if self.error_function == cross_entropy:
-                # Assumes the sigmoid activation function
-                self.deltas[i] = e
-            else:
-#            error_deriv = self.error_deriv(act, targ)
-                self.deltas[i] = e * self.act_slope(act, var=self.act_arg)
-            error += e * e
-        return math.sqrt(error / self.size)
+#         error = 0.0
+#         for i in range(self.size):
+#             targ = target[i]
+#             act = self.activations[i]
+#             e = 0.0 if (targ == NO_TARGET) else (targ - act)
+#             self.errors[i] = e
+#             if self.error_function == cross_entropy:
+#                 # Assumes the sigmoid activation function
+#                 self.deltas[i] = e
+#             else:
+# #            error_deriv = self.error_deriv(act, targ)
+#                 self.deltas[i] = e * self.act_slope(act, var=self.act_arg)
+#             error += e * e
+#         return math.sqrt(error / self.size)
 
     def gradient_norm(self):
-        if self.array:
-            sumofsquares = np.sum(np.square(self.gradients))
-            norm = math.sqrt(sumofsquares)
-            return norm
-        sumofsqrs = 0.0
-        for u in range(len(self.gradients)):
-            # for each weight vector calculate the dot product with itself
-            grads = self.gradients[u]
-            sumofsqrs += dot_product(grads, grads)
-        norm = math.sqrt(sumofsqrs)
-        print("** old norm {}".format(norm))
+#        if self.array:
+        sumofsquares = np.sum(np.square(self.gradients))
+        norm = math.sqrt(sumofsquares)
         return norm
+        # sumofsqrs = 0.0
+        # for u in range(len(self.gradients)):
+        #     # for each weight vector calculate the dot product with itself
+        #     grads = self.gradients[u]
+        #     sumofsqrs += dot_product(grads, grads)
+        # norm = math.sqrt(sumofsqrs)
+        # print("** old norm {}".format(norm))
+        # return norm
 
     def clip_gradients(self, norm):
         scale = self.grad_clip / norm
@@ -513,6 +571,8 @@ class Layer:
 
     def update_weights(self, delay=0, lr=None, verbose=0):
         '''Update the weights, first calculating the gradient norm.'''
+        if not self.do_update:
+            return
         grad_norm = self.calc_gradients(delay=delay)
         # Clip gradients if this is not an output layer
 #        if self.output_layer:

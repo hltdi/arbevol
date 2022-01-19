@@ -33,8 +33,9 @@ class Lexicon:
         else:
             self.form_space = None
         self.make(self.meanings, patterns=patterns)
-        self.make_patterns()
-        self.make_exp_conditions()
+        self.make_patterns2()
+        # self.make_patterns()
+        # self.make_exp_conditions()
         # After make()
         # Comprehension and production training patterns
 
@@ -47,6 +48,17 @@ class Lexicon:
 #                layers = [Layer('in', self.flength+self.nmeaning),
 #                          Layer('hid', nhidden),
 #                          Layer('out', self.flength+self.nmeaning)])
+
+#    def adjust_forms(self):
+
+    def update_forms(self, form_dict):
+        '''
+        Adjust the form values in the lexicon based on those in the form
+        dict (entry_index: array)
+        '''
+        for index, form in form_dict.items():
+            entry = self.entries[index]
+            entry[1] = Form(form)
 
     @staticmethod
     def from_network(experiment, meanings, person):
@@ -140,12 +152,89 @@ class Lexicon:
         """
         return [l.get_form() for l in self.entries]
 
-    def make_patterns(self):
-        self.patterns = [l.make_input_target() for l in self.entries]
-        self.comp_test_patterns = [l.make_comprehension_IT(test=True) for l in self.entries]
-        self.prod_test_patterns = [l.make_production_IT(test=True) for l in self.entries]
-        self.comp_train_patterns = [l.make_comprehension_IT(test=False) for l in self.entries]
-        self.prod_train_patterns = [l.make_production_IT(test=False) for l in self.entries]
+    def comppat_from_network(self, network, lex, showmeaning=0.2):
+        """
+        Given a lex meaning as input, return the form output of the network,
+        and the meaning as target, for training and testing another network
+        on comprehension.
+        """
+        meaning = lex.get_meaning()
+        target = lex.make_pattern(meaning=True, form=False, target=True)
+        form_input = np.zeros(self.flength)
+        input = np.concatenate((meaning, form_input))
+        network.step([input, None], train=False)
+        output = np.copy(network.layers[-1].activations)
+        # Set output meaning to 0.0 except in showmeaning positions
+        nzero = round((1.0 - showmeaning) * self.mlength)
+        positions = list(range(self.mlength))
+        random.shuffle(positions)
+        zeropos = positions[:nzero]
+        for pos in zeropos:
+            output[pos] = 0.0
+        return output, target
+
+    def comppats_from_network(self, network, showmeaning=0.2):
+        return [self.comppat_from_network(network, lex, showmeaning=showmeaning) \
+                for lex in self.entries]
+
+    # def make_patterns(self):
+    #     self.patterns = [l.make_input_target() for l in self.entries]
+    #     self.comp_test_patterns = [l.make_comprehension_IT(test=True) for l in self.entries]
+    #     self.prod_test_patterns = [l.make_production_IT(test=True) for l in self.entries]
+    #     self.comp_train_patterns = [l.make_comprehension_IT(test=False) for l in self.entries]
+    #     self.prod_train_patterns = [l.make_production_IT(test=False) for l in self.entries]
+
+    def make_patterns2(self):
+        self.comppats = [l.make_comprehension_IT(simple=True) for l in self.entries]
+        self.prodpats = [l.make_production_IT(simple=True) for l in self.entries]
+
+    def get_meaning_targets(self):
+        return [e[0] for e in self.entries]
+
+    def get_form_targets(self):
+        return [e[1] for e in self.entries]
+
+    def make_comp_patfunc(self, noise=False):
+        noise = noise and self.noise
+        def patfunc(index=-1):
+            if index < 0:
+                input, target = random.choice(self.comppats)
+            elif index >= self.nlex:
+                return False, 0
+            else:
+                input, target = self.comppats[index]
+            if noise:
+                input = noisify(input, sd=noise)
+            return [input, target], 0
+        return PatGen(self.nlex, function=patfunc, targets=self.get_meaning_targets)
+
+    def make_prod_patfunc(self, noise=False):
+        noise = noise and self.noise
+        def patfunc(index=-1):
+            if index < 0:
+                input, target = random.choice(self.prodpats)
+            elif index >= self.nlex:
+                return False, 0
+            else:
+                input, target = self.prodpats[index]
+            if noise:
+                input = noisify(input, sd=noise)
+            return [input, target], 0
+        return PatGen(self.nlex, function=patfunc, targets=self.get_form_targets)
+
+    def make_joint_patfunc(self, noise=False):
+        noise = noise and self.noise
+        def patfunc(index=-1):
+            if index < 0:
+                input = random.choice(self.meanings)
+            elif index >= self.nlex:
+                return False, 0
+            else:
+                input = self.meanings[index]
+            if noise:
+                input = noisify(input, sd=noise)
+            return [input, input], 0
+        return PatGen(self.nlex, function=patfunc, targets=self.get_meaning_targets)
 
     def perf_pattern(self, pattern, comp=True):
         """
@@ -161,13 +250,15 @@ class Lexicon:
                 p[i] = 0.0
             return p
 
-    def make_patfunc(self, compprob=1.0, prodprob=0.0, showmeaning=0.2):
+    def make_patfunc(self, compprob=1.0, prodprob=0.0, showmeaning=0.2,
+                     noise=True):
         """
         perfprob is the probability of training on either a comprehension
         or a production input pattern.
         showmeaning is the probability of revealing one of the meaning units
         in a comprehension input pattern.
         """
+        noise = noise and self.noise
         perfprob = compprob + prodprob
         if perfprob > 1.0:
             print("Comp prob {} and prod prob {} sum > 1".format(compprob, prodprob))
@@ -180,8 +271,8 @@ class Lexicon:
                 if compprob and rand < compprob:
                     # Comprehension
                     pattern = self.comp_train_patterns[pindex]
-                    if self.noise:
-                        input = noisify(pattern[0], sd=self.noise, indices=(self.mlength, self.patlength))
+                    if noise:
+                        input = noisify(pattern[0], sd=noise, indices=(self.mlength, self.patlength))
                     else:
                         input = np.copy(pattern[0])
                     # Set input meaning to 0.0 except in showmeaning positions
@@ -194,13 +285,13 @@ class Lexicon:
                 else:
                     # Production
                     pattern = self.prod_train_patterns[pindex]
-                    if self.noise:
-                        input = noisify(pattern[0], sd=self.noise, indices=(0, self.mlength))
+                    if noise:
+                        input = noisify(pattern[0], sd=noise, indices=(0, self.mlength))
                     else:
                         input = pattern[0]
             else:
                 pattern = self.patterns[pindex]
-                input = noisify(pattern[0], sd=self.noise) if self.noise else pattern[0]
+                input = noisify(pattern[0], sd=noise) if noise else pattern[0]
             target = pattern[1]
             return [input, target], 0
         return PatGen(self.nlex, function=patfunc, targets=self.get_targets)
@@ -273,17 +364,19 @@ class Lexicon:
         """
         return [p[1] for p in self.prod_test_patterns]
 
-    def spec_exp_conditions(self, comptrain=0.33, prodtrain=0.33):
+    def spec_exp_conditions(self, comptrain=0.33, prodtrain=0.33,
+                            noise=True):
         """
         Create specific pattern generation functions for an experiment.
         """
-        patfunc = self.make_patfunc(compprob=comptrain, prodprob=prodtrain)
+        patfunc = self.make_patfunc(compprob=comptrain, prodprob=prodtrain,
+                                    noise=noise)
         if comptrain == 1.0:
             return [ [patfunc, self.make_comptest_patfunc()] ]
         elif prodtrain == 1.0:
             return [ [patfunc, self.make_prodtest_patfunc()] ]
-        elif comptrain + prodtrain == 1.0:
-            return [ [patfunc, self.make_test_patfunc()] ]
+#        elif comptrain + prodtrain == 1.0:
+#            return [ [patfunc, self.make_test_patfunc()] ]
         else:
             return \
             [ [patfunc,
@@ -291,14 +384,14 @@ class Lexicon:
                 'comp': self.make_comptest_patfunc(),
                 'prod': self.make_prodtest_patfunc()}] ]
 
-    def make_exp_conditions(self, compprob=0.33, prodprob=0.33):
-        patfunc = self.make_patfunc(compprob=compprob, prodprob=prodprob)
-        testpatfunc = self.make_test_patfunc()
-        comppatfunc = self.make_comptest_patfunc()
-        prodpatfunc = self.make_prodtest_patfunc()
-        self.exp_conds = \
-        [ [patfunc,
-           {'comp': comppatfunc, 'prod': prodpatfunc, 'full': testpatfunc}] ]
+    # def make_exp_conditions(self, compprob=0.33, prodprob=0.33):
+    #     patfunc = self.make_patfunc(compprob=compprob, prodprob=prodprob)
+    #     testpatfunc = self.make_test_patfunc()
+    #     comppatfunc = self.make_comptest_patfunc()
+    #     prodpatfunc = self.make_prodtest_patfunc()
+    #     self.exp_conds = \
+    #     [ [patfunc,
+    #        {'comp': comppatfunc, 'prod': prodpatfunc, 'full': testpatfunc}] ]
 
     def calc_iconicity(self):
         """
@@ -357,35 +450,6 @@ class Lex(list):
     def get_form(self):
         return self[1]
 
-#     def make_iconic_form(self, meaning, forms=None):
-#         current_forms = forms or self.lexicon.get_forms()
-#         candidate = None
-#         while True:
-#             candidate = Form.make_iconic_form(meaning, self.nvalues, self.flength)
-# #            self.iconic_form_cand(meaning)
-#             found = True
-#             for f in current_forms:
-#                 if type(f) != np.ndarray:
-#                     # f could be None in a new lexicon
-#                     continue
-#                 if (candidate == f).all():
-#                     found = False
-#                     break
-#             if not found:
-#                 continue
-#             return Form(candidate)
-
-    # def iconic_form_cand(self, meaning):
-    #     form = np.copy(meaning)[:self.flength]
-    #     nflip = int(self.deiconize * (1.0 - 1.0 / self.nvalues) * self.flength)
-    #     flip_positions = list(range(self.flength))
-    #     random.shuffle(flip_positions)
-    #     flip_positions = flip_positions[:nflip]
-    #     values = gen_value_opts(self.nvalues)
-    #     for pos in flip_positions:
-    #         form[pos] = random.choice(values)
-    #     return form
-
     def make_arbitrary_form(self, form_space, index):
         f = form_space[index]
 #        f = gen_array(self.nvalues, self.flength)
@@ -440,19 +504,23 @@ class Lex(list):
         target = self.make_pattern(meaning=meaning[1], form=form[1], target=True)
         return [input, target]
 
-    def make_comprehension_IT(self, test=False, copy=False):
+    def make_comprehension_IT(self, test=False, copy=False, simple=False):
         """
         Input-target pair for comprehension. If copy is True, form pattern
         is included in training target.
         """
+        if simple:
+            return [self.get_form(), self.get_meaning()]
         return \
         self.make_input_target(meaning=(True, True), form=(True, copy and not test))
 
-    def make_production_IT(self, test=False, copy=False):
+    def make_production_IT(self, test=False, copy=False, simple=False):
         """
         Input-target for production. If copy is True, meaning pattern is included
         in training target.
         """
+        if simple:
+            return [self.get_meaning(), self.get_form()]
         return \
         self.make_input_target(meaning=(True, copy and not test), form=(False, True))
 
@@ -516,15 +584,19 @@ class Form(np.ndarray):
              return Form(candidate)
 
      @staticmethod
-     def make_iconic_form(meaning, nvalues, length, forms):
+     def make_iconic_form(meaning, nvalues, length, forms, threshold=0.4):
+#         print("Make iconic form {}".format(forms))
          candidate = None
          while True:
              candidate = Form.iconic_form_candidate(meaning, nvalues, length)
              found = True
              for f in forms:
-                 if type(f) != np.ndarray:
+                 if type(f) != Form:
                      continue
-                 if (candidate == f).all():
+                 if array_distance(candidate, f) < threshold:
+#                     print("Distance {}".format(array_distance(candidate, f)))
+#                 (candidate == f).all():
+#                     print("{} already in forms".format(candidate))
                      found = False
                      break
              if not found:
@@ -534,6 +606,8 @@ class Form(np.ndarray):
      @staticmethod
      def iconic_form_candidate(meaning, nvalues, length):
          form = np.copy(meaning)[:length]
+         if not Form.deiconize:
+             return form
          nflip = int(Form.deiconize * (1.0 - 1.0 / nvalues) * length)
          flip_positions = list(range(length))
          random.shuffle(flip_positions)

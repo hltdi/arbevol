@@ -88,7 +88,9 @@ class Experiment:
             print("Beginning of new sequence")
         return pat, error[0], error[1]
 
-    def run(self, n, train=True, lr=None, show_act=False):
+    def run(self, n=1000, train=True, lr=None, show_act=False,
+            test_every=500,
+            error_thresh=0.01, error_change_thresh=0.0, miss_thresh=0.0):
         '''
         Run the Experiment on n patterns, training it and incrementing trials
         if train is True.
@@ -96,18 +98,37 @@ class Experiment:
         self.current_error = 0.0
         trial0 = self.trials
         patgen = self.get_patgen(train=train)
+        test_error = 10.0
+        miss_error = 0.0
+        misses = None
+        record = None
+        trials = 0
         for i in range(n):
+            trials += 1
             pat_err_win = self.step(train, patgen=patgen, lr=lr,
                                     show_act=show_act, show_error=False)
             self.current_error += pat_err_win[1]
-        error = self.current_error / n
-        print(self.trials, 'trials')
-        print('Run error: {:.3f}'.format(error))
-        return error
+            if test_every and i % test_every == 0:
+                print("Testing at {} trials: ".format(i), end=' ')
+                old_test_error = test_error
+                test_error, miss_error, misses, record = self.test_all()
+                error_change = old_test_error - test_error
+                if test_error <= error_thresh or \
+                    miss_error < miss_thresh or \
+                    error_change < error_change_thresh:
+                    break
+        error = self.current_error / trials
+        print("\n{} TRIALS".format(self.trials))
+        print('RUN ERROR: {:.3f}'.format(error))
+        if test_every:
+            print('TEST ERROR: {:.3f}'.format(test_error))
+            if self.test_nearest:
+                print('MISS ERROR: {:.3f}'.format(miss_error))
+        return error, test_error, miss_error
 
-    def test_all(self, pg_kind='full', reps=2, record=False, verbose=0):
+    def test_all(self, pg_kind='full', reps=1, record=False, verbose=0):
         '''Test the network on all patterns reps times.'''
-        self.current_error = 0.0
+        current_error = 0.0
         nearest_misses = 0
         nearest_error = 0.0
         patgen = self.get_patgen(train=False, kind=pg_kind)
@@ -121,39 +142,43 @@ class Experiment:
                 if not pat_err_win[0]:
                     # step() returns empty pattern for this pindex
                     break
-                self.current_error += pat_err_win[1]
+                current_error += pat_err_win[1]
                 if self.test_nearest:
                     target = pat_err_win[0][1]
-                    hit = self.nearest(target, patgen, verbose=verbose)
+                    hit, nrst = self.nearest(target, patgen, verbose=verbose)
                     if not hit:
                         nearest_misses += 1
                         if pindex not in pindex_errors:
                             pindex_errors[pindex] = 0
                         pindex_errors[pindex] += 1
                         if verbose:
-                            print("MISSED target category")
+                            print("Missed target, found {}".format(nrst))
                     elif verbose:
-                        print("HIT target category")
+                        print("Hit target")
                     if record != None and pindex >= 0 and (hit or not self.record_only_hits):
-                        net_out = self.network.layers[-1].activations
+                        layer_index = record if isinstance(record, int) else -1
+                        net_out = self.network.layers[layer_index].activations
                         record_out = np.array([a for a, t in zip(net_out, target) if t != NO_TARGET])
                         if pindex not in recorded:
                             recorded[pindex] = record_out
                         else:
                             recorded[pindex] += record_out
+                if verbose:
+                    print()
                 pindex += 1
 
         nitems = pindex * reps
 #        print("N items: {}".format(nitems))
         # At this point pindex is number of test patterns
-        run_error = self.current_error / nitems
-        print('Run error'.ljust(12), end=' ')
-        print("{: .3f}".format(run_error))
+        run_error = current_error / nitems
+        print('Run error: {: .3f}'.format(run_error), end=' ')
         if self.test_nearest:
             nearest_error = nearest_misses / nitems
             for i in pindex_errors:
                 pindex_errors[i] /= reps
-            print("Nearest error: {: .2f}".format(nearest_error))
+            print("Miss error: {: .2f}".format(nearest_error))
+        else:
+            print()
         if record:
             for i in recorded:
                 recorded[i] /= reps
@@ -162,28 +187,30 @@ class Experiment:
 
     def test(self, n, pg_kind='full', verbose=1):
         '''Test the network on n patterns.'''
-        self.current_error = 0.0
+        current_error = 0.0
         nearest_misses = 0
         nearest_error = 0.0
         patgen = self.get_patgen(train=False, kind=pg_kind)
         for i in range(n):
             pat_err_win = self.step(False, patgen=patgen, show_error=verbose>0, show_act=verbose>0)
-            self.current_error += pat_err_win[1]
+            current_error += pat_err_win[1]
             if self.test_nearest:
                 target = pat_err_win[0][1]
-                hit = self.nearest(target, patgen, verbose=verbose)
+                hit, nrst = self.nearest(target, patgen, verbose=verbose)
                 if not hit:
                     nearest_misses += 1
                     if verbose:
-                        print("MISSED target category")
+                        print("Missed target category, found {}".format(nrst))
                 elif verbose:
-                    print("HIT target category")
-        run_error = self.current_error / n
-        print('Run error'.ljust(12), end=' ')
+                    print("Hit target category")
+            if verbose:
+                print()
+        run_error = current_error / n
+        print('TEST RUN ERROR'.ljust(12), end=' ')
         print("{: .3f}".format(run_error))
         if self.test_nearest:
             nearest_error = nearest_misses / n
-            print("Nearest error: {: .2f}".format(nearest_error))
+            print("TEST MISS ERROR: {: .2f}".format(nearest_error))
         return run_error, nearest_error
 
     def nearest(self, target, patgen, test=True, verbose=0):
@@ -193,7 +220,7 @@ class Experiment:
         output = self.network.get_output()
 #        patgen = self.test_pat_gen if test else self.pat_gen
         nearest, correct = patgen.get_nearest(output, target, verbose=verbose)
-        return correct
+        return correct, nearest
 
     def reinit(self):
         '''Start from 0 trials and reinitalize weights in network.'''
