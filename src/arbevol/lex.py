@@ -33,7 +33,11 @@ class Lexicon:
         else:
             self.form_space = None
         self.make(self.meanings, patterns=patterns)
-        self.make_patterns2()
+        # comppats and prodpats
+        self.make_patterns()
+        self.jointpats = [[l.get_meaning(), l.get_meaning()] for l in self.entries]
+        # constant empty Form array
+        self.empty_form = Form(np.full(self.flength, -100.0))
         # self.make_patterns()
         # self.make_exp_conditions()
         # After make()
@@ -51,48 +55,67 @@ class Lexicon:
 
 #    def adjust_forms(self):
 
-    def update_forms(self, form_dict):
+    def show(self):
+        for i, e in enumerate(self.entries):
+            print("{:>3} {}".format(i, e))
+
+    def update_forms(self, form_dict, index_errors):
         '''
         Adjust the form values in the lexicon based on those in the form
-        dict (entry_index: array)
+        dict (entry_index: array).
+        index_errors is a dict with indices of patterns for which there were
+        target category errors and the indices of the errors.
+        Patterns must be regenerated after this.
         '''
-        for index, form in form_dict.items():
-            entry = self.entries[index]
-            entry[1] = Form(form)
+        for index, entry in enumerate(self.entries):
+            form = form_dict.get(index, self.empty_form)
+            if form is self.empty_form:
+                # No new form for this pattern because of an error
+                error_index = index_errors[index]
+                old_form = entry.get_form()
+                error_form = self.entries[error_index].get_form()
+                old_form.separate(error_form)
+            else:
+                entry[1] = Form(form)
+#        for index, form in form_dict.items():
+#            entry = self.entries[index]
+#            entry[1] = Form(form)
+        # Make patterns using new forms.
+        self.make_patterns()
 
-    @staticmethod
-    def from_network(experiment, meanings, person):
-        '''
-        Create a Lexicon from the output of a production network presented
-        with Meanings as input.
-        '''
-        flength = person.population.flength
-        nvalues = person.population.mvalues
-        newarb = person.newarb
-        paterror, nearest_error, errors, form_out = \
-        experiment.test_all('prod', reps=1, record=True)
-        patterns = []
-        for i, meaning in enumerate(meanings):
-            form = form_out.get(i)
-            if type(form) == np.ndarray:
-                form = Form(form)
-            patterns.append([meaning, form])
-        for m, f in patterns:
-            print("** {} | {}".format(m, f))
-        for index, (m, f) in enumerate(patterns):
-            if type(f) != Form:
-                # no form for this entry
-                print("Setting form for {}".format((m, f)))
-                forms = [p[1] for p in patterns]
-                if np.random.rand() < newarb:
-                    # Generate a random form
-                    patterns[index][1] =  Form.make_random_form(nvalues, flength, forms)
-                else:
-                    # Generate an iconic form
-                    patterns[index][1] = Form.make_iconic_form(m, nvalues, flength, forms)
-
-        return Lexicon(person.id, person.population.environment,
-                       flength, patterns=patterns, nlex=len(meanings))
+    # @staticmethod
+    # def from_network(experiment, meanings, person):
+    #     '''
+    #     Create a Lexicon from the output of a production network presented
+    #     with Meanings as input.
+    #     '''
+    #     flength = person.population.flength
+    #     nvalues = person.population.mvalues
+    #     newarb = person.newarb
+    #     paterror, nearest_error, errors, form_out = \
+    #     experiment.test_all('prod', reps=1, record=True)
+    #     patterns = []
+    #     for i, meaning in enumerate(meanings):
+    #         form = form_out.get(i)
+    #         if type(form) == np.ndarray:
+    #             form = Form(form)
+    #         patterns.append([meaning, form])
+    #     for m, f in patterns:
+    #         print("** {} | {}".format(m, f))
+    #     for index, (m, f) in enumerate(patterns):
+    #         if type(f) != Form:
+    #             # no form for this entry
+    #             print("Setting form for {}".format((m, f)))
+    #             forms = [p[1] for p in patterns]
+    #             if np.random.rand() < newarb:
+    #                 # Generate a random form
+    #                 patterns[index][1] =  Form.make_random_form(nvalues, flength, forms)
+    #             else:
+    #                 # Generate an iconic form
+    #                 patterns[index][1] = Form.make_iconic_form(m, nvalues, flength, forms)
+    #
+    #     return Lexicon(person.id, person.population.environment,
+    #                    flength, patterns=patterns, nlex=len(meanings))
 
     def make(self, meanings, patterns=None):
         """
@@ -152,30 +175,30 @@ class Lexicon:
         """
         return [l.get_form() for l in self.entries]
 
-    def comppat_from_network(self, network, lex, showmeaning=0.2):
-        """
-        Given a lex meaning as input, return the form output of the network,
-        and the meaning as target, for training and testing another network
-        on comprehension.
-        """
-        meaning = lex.get_meaning()
-        target = lex.make_pattern(meaning=True, form=False, target=True)
-        form_input = np.zeros(self.flength)
-        input = np.concatenate((meaning, form_input))
-        network.step([input, None], train=False)
-        output = np.copy(network.layers[-1].activations)
-        # Set output meaning to 0.0 except in showmeaning positions
-        nzero = round((1.0 - showmeaning) * self.mlength)
-        positions = list(range(self.mlength))
-        random.shuffle(positions)
-        zeropos = positions[:nzero]
-        for pos in zeropos:
-            output[pos] = 0.0
-        return output, target
-
-    def comppats_from_network(self, network, showmeaning=0.2):
-        return [self.comppat_from_network(network, lex, showmeaning=showmeaning) \
-                for lex in self.entries]
+    # def comppat_from_network(self, network, lex, showmeaning=0.2):
+    #     """
+    #     Given a lex meaning as input, return the form output of the network,
+    #     and the meaning as target, for training and testing another network
+    #     on comprehension.
+    #     """
+    #     meaning = lex.get_meaning()
+    #     target = lex.make_pattern(meaning=True, form=False, target=True)
+    #     form_input = np.zeros(self.flength)
+    #     input = np.concatenate((meaning, form_input))
+    #     network.step([input, None], train=False)
+    #     output = np.copy(network.layers[-1].activations)
+    #     # Set output meaning to 0.0 except in showmeaning positions
+    #     nzero = round((1.0 - showmeaning) * self.mlength)
+    #     positions = list(range(self.mlength))
+    #     random.shuffle(positions)
+    #     zeropos = positions[:nzero]
+    #     for pos in zeropos:
+    #         output[pos] = 0.0
+    #     return output, target
+    #
+    # def comppats_from_network(self, network, showmeaning=0.2):
+    #     return [self.comppat_from_network(network, lex, showmeaning=showmeaning) \
+    #             for lex in self.entries]
 
     # def make_patterns(self):
     #     self.patterns = [l.make_input_target() for l in self.entries]
@@ -184,7 +207,7 @@ class Lexicon:
     #     self.comp_train_patterns = [l.make_comprehension_IT(test=False) for l in self.entries]
     #     self.prod_train_patterns = [l.make_production_IT(test=False) for l in self.entries]
 
-    def make_patterns2(self):
+    def make_patterns(self):
         self.comppats = [l.make_comprehension_IT(simple=True) for l in self.entries]
         self.prodpats = [l.make_production_IT(simple=True) for l in self.entries]
 
@@ -236,111 +259,110 @@ class Lexicon:
             return [input, input], 0
         return PatGen(self.nlex, function=patfunc, targets=self.get_meaning_targets)
 
-    def perf_pattern(self, pattern, comp=True):
-        """
-        Convert a full input pattern to a comprehension or production pattern.
-        """
-        p = np.copy(pattern)
-        if comp:
-            for i in range(self.mlength, self.patlength):
-                p[i] = 0.0
-            return p
-        else:
-            for i in range(self.mlength):
-                p[i] = 0.0
-            return p
+    # def perf_pattern(self, pattern, comp=True):
+    #     """
+    #     Convert a full input pattern to a comprehension or production pattern.
+    #     """
+    #     p = np.copy(pattern)
+    #     if comp:
+    #         for i in range(self.mlength, self.patlength):
+    #             p[i] = 0.0
+    #         return p
+    #     else:
+    #         for i in range(self.mlength):
+    #             p[i] = 0.0
+    #         return p
 
-    def make_patfunc(self, compprob=1.0, prodprob=0.0, showmeaning=0.2,
-                     noise=True):
-        """
-        perfprob is the probability of training on either a comprehension
-        or a production input pattern.
-        showmeaning is the probability of revealing one of the meaning units
-        in a comprehension input pattern.
-        """
-        noise = noise and self.noise
-        perfprob = compprob + prodprob
-        if perfprob > 1.0:
-            print("Comp prob {} and prod prob {} sum > 1".format(compprob, prodprob))
-        def patfunc(index=-1):
-            pindex = np.random.randint(0, len(self.entries))
-            rand = np.random.rand()
-#            print("** compprob: {}, prodprob: {}, r: {}".format(compprob, prodprob, rand))
-            if perfprob and rand < perfprob:
-                # Performance training instance
-                if compprob and rand < compprob:
-                    # Comprehension
-                    pattern = self.comp_train_patterns[pindex]
-                    if noise:
-                        input = noisify(pattern[0], sd=noise, indices=(self.mlength, self.patlength))
-                    else:
-                        input = np.copy(pattern[0])
-                    # Set input meaning to 0.0 except in showmeaning positions
-                    nzero = round((1.0 - showmeaning) * self.mlength)
-                    positions = list(range(self.mlength))
-                    random.shuffle(positions)
-                    zeropos = positions[:nzero]
-                    for pos in zeropos:
-                        input[pos] = 0.0
-                else:
-                    # Production
-                    pattern = self.prod_train_patterns[pindex]
-                    if noise:
-                        input = noisify(pattern[0], sd=noise, indices=(0, self.mlength))
-                    else:
-                        input = pattern[0]
-            else:
-                pattern = self.patterns[pindex]
-                input = noisify(pattern[0], sd=noise) if noise else pattern[0]
-            target = pattern[1]
-            return [input, target], 0
-        return PatGen(self.nlex, function=patfunc, targets=self.get_targets)
-
-    def make_test_patfunc(self, noise=True):
-        def patfunc(index=-1):
-            if index < 0:
-                pattern = random.choice(self.patterns)
-            elif index >= self.nlex:
-                return False, 0
-            else:
-                pattern = self.patterns[index]
-            input = pattern[0] # noisify(pattern[0], sd=self.noise) if (noise and self.noise) else pattern[0]
-            target = pattern[1]
-            return [input, target], 0
-        return PatGen(self.nlex, function=patfunc, targets=self.get_targets)
-
-    def make_comptest_patfunc(self, noise=True, showmeaning=0.2):
-        def patfunc(index=-1):
-            if index < 0:
-                pattern = random.choice(self.comp_test_patterns)
-            elif index >= self.nlex:
-                return False, 0
-            else:
-                pattern = self.comp_test_patterns[index]
-            input = np.copy(pattern[0]) # noisify(pattern[0], sd=self.noise, indices=(self.mlength, self.patlength)) if (noise and self.noise) else pattern[0]
-            # Set input meaning to 0.0 except in showmeaning positions
-            nzero = round((1.0 - showmeaning) * self.mlength)
-            positions = list(range(self.mlength))
-            random.shuffle(positions)
-            zeropos = positions[:nzero]
-            for pos in zeropos:
-                input[pos] = 0.0
-            target = pattern[1]
-            return [input, target], 0
-        return PatGen(self.nlex, function=patfunc, targets=self.get_comp_targets)
-
-    def make_prodtest_patfunc(self, noise=True):
-        def patfunc(index=-1):
-            if index < 0:
-                pattern = random.choice(self.prod_test_patterns)
-            elif index >= self.nlex:
-                return False, 0
-            else:
-                pattern = self.prod_test_patterns[index]
-            input = pattern[0] # noisify(pattern[0], sd=self.noise, indices=(0, self.mlength)) if (noise and self.noise) else pattern[0]
-            target = pattern[1]
-            return [input, target], 0
-        return PatGen(self.nlex, function=patfunc, targets=self.get_prod_targets)
+    # def make_patfunc(self, compprob=1.0, prodprob=0.0, showmeaning=0.2,
+    #                  noise=True):
+    #     """
+    #     perfprob is the probability of training on either a comprehension
+    #     or a production input pattern.
+    #     showmeaning is the probability of revealing one of the meaning units
+    #     in a comprehension input pattern.
+    #     """
+    #     noise = noise and self.noise
+    #     perfprob = compprob + prodprob
+    #     if perfprob > 1.0:
+    #         print("Comp prob {} and prod prob {} sum > 1".format(compprob, prodprob))
+    #     def patfunc(index=-1):
+    #         pindex = np.random.randint(0, len(self.entries))
+    #         rand = np.random.rand()
+    #         if perfprob and rand < perfprob:
+    #             # Performance training instance
+    #             if compprob and rand < compprob:
+    #                 # Comprehension
+    #                 pattern = self.comp_train_patterns[pindex]
+    #                 if noise:
+    #                     input = noisify(pattern[0], sd=noise, indices=(self.mlength, self.patlength))
+    #                 else:
+    #                     input = np.copy(pattern[0])
+    #                 # Set input meaning to 0.0 except in showmeaning positions
+    #                 nzero = round((1.0 - showmeaning) * self.mlength)
+    #                 positions = list(range(self.mlength))
+    #                 random.shuffle(positions)
+    #                 zeropos = positions[:nzero]
+    #                 for pos in zeropos:
+    #                     input[pos] = 0.0
+    #             else:
+    #                 # Production
+    #                 pattern = self.prod_train_patterns[pindex]
+    #                 if noise:
+    #                     input = noisify(pattern[0], sd=noise, indices=(0, self.mlength))
+    #                 else:
+    #                     input = pattern[0]
+    #         else:
+    #             pattern = self.patterns[pindex]
+    #             input = noisify(pattern[0], sd=noise) if noise else pattern[0]
+    #         target = pattern[1]
+    #         return [input, target], 0
+    #     return PatGen(self.nlex, function=patfunc, targets=self.get_targets)
+    #
+    # def make_test_patfunc(self, noise=True):
+    #     def patfunc(index=-1):
+    #         if index < 0:
+    #             pattern = random.choice(self.patterns)
+    #         elif index >= self.nlex:
+    #             return False, 0
+    #         else:
+    #             pattern = self.patterns[index]
+    #         input = pattern[0] # noisify(pattern[0], sd=self.noise) if (noise and self.noise) else pattern[0]
+    #         target = pattern[1]
+    #         return [input, target], 0
+    #     return PatGen(self.nlex, function=patfunc, targets=self.get_targets)
+    #
+    # def make_comptest_patfunc(self, noise=True, showmeaning=0.2):
+    #     def patfunc(index=-1):
+    #         if index < 0:
+    #             pattern = random.choice(self.comp_test_patterns)
+    #         elif index >= self.nlex:
+    #             return False, 0
+    #         else:
+    #             pattern = self.comp_test_patterns[index]
+    #         input = np.copy(pattern[0]) # noisify(pattern[0], sd=self.noise, indices=(self.mlength, self.patlength)) if (noise and self.noise) else pattern[0]
+    #         # Set input meaning to 0.0 except in showmeaning positions
+    #         nzero = round((1.0 - showmeaning) * self.mlength)
+    #         positions = list(range(self.mlength))
+    #         random.shuffle(positions)
+    #         zeropos = positions[:nzero]
+    #         for pos in zeropos:
+    #             input[pos] = 0.0
+    #         target = pattern[1]
+    #         return [input, target], 0
+    #     return PatGen(self.nlex, function=patfunc, targets=self.get_comp_targets)
+    #
+    # def make_prodtest_patfunc(self, noise=True):
+    #     def patfunc(index=-1):
+    #         if index < 0:
+    #             pattern = random.choice(self.prod_test_patterns)
+    #         elif index >= self.nlex:
+    #             return False, 0
+    #         else:
+    #             pattern = self.prod_test_patterns[index]
+    #         input = pattern[0] # noisify(pattern[0], sd=self.noise, indices=(0, self.mlength)) if (noise and self.noise) else pattern[0]
+    #         target = pattern[1]
+    #         return [input, target], 0
+    #     return PatGen(self.nlex, function=patfunc, targets=self.get_prod_targets)
 
 #    def make_testpatfunc(self):
 #        def patfunc():
@@ -364,25 +386,23 @@ class Lexicon:
         """
         return [p[1] for p in self.prod_test_patterns]
 
-    def spec_exp_conditions(self, comptrain=0.33, prodtrain=0.33,
-                            noise=True):
-        """
-        Create specific pattern generation functions for an experiment.
-        """
-        patfunc = self.make_patfunc(compprob=comptrain, prodprob=prodtrain,
-                                    noise=noise)
-        if comptrain == 1.0:
-            return [ [patfunc, self.make_comptest_patfunc()] ]
-        elif prodtrain == 1.0:
-            return [ [patfunc, self.make_prodtest_patfunc()] ]
-#        elif comptrain + prodtrain == 1.0:
-#            return [ [patfunc, self.make_test_patfunc()] ]
-        else:
-            return \
-            [ [patfunc,
-               {'full': self.make_test_patfunc(),
-                'comp': self.make_comptest_patfunc(),
-                'prod': self.make_prodtest_patfunc()}] ]
+    # def spec_exp_conditions(self, comptrain=0.33, prodtrain=0.33,
+    #                         noise=True):
+    #     """
+    #     Create specific pattern generation functions for an experiment.
+    #     """
+    #     patfunc = self.make_patfunc(compprob=comptrain, prodprob=prodtrain,
+    #                                 noise=noise)
+    #     if comptrain == 1.0:
+    #         return [ [patfunc, self.make_comptest_patfunc()] ]
+    #     elif prodtrain == 1.0:
+    #         return [ [patfunc, self.make_prodtest_patfunc()] ]
+    #     else:
+    #         return \
+    #         [ [patfunc,
+    #            {'full': self.make_test_patfunc(),
+    #             'comp': self.make_comptest_patfunc(),
+    #             'prod': self.make_prodtest_patfunc()}] ]
 
     # def make_exp_conditions(self, compprob=0.33, prodprob=0.33):
     #     patfunc = self.make_patfunc(compprob=compprob, prodprob=prodprob)
@@ -393,7 +413,7 @@ class Lexicon:
     #     [ [patfunc,
     #        {'comp': comppatfunc, 'prod': prodpatfunc, 'full': testpatfunc}] ]
 
-    def calc_iconicity(self):
+    def get_iconicity(self):
         """
         Correlations between form and meaning dimensions.
         """
@@ -402,14 +422,15 @@ class Lexicon:
             maxcorr = -1.0
             maxmdim = -1
             for mdim in range(self.mlength):
-                corr = self.calc_iconicity_dim(fdim, mdim)
+                corr = self.get_iconicity_dim(fdim, mdim)
                 if corr > maxcorr:
                     maxcorr = corr
                     maxmdim = mdim
             result.append((maxcorr, maxmdim))
+        result = sum(result) / self.flength
         return result
 
-    def calc_iconicity_dim(self, fdim, mdim):
+    def get_iconicity_dim(self, fdim, mdim):
         """
         Correlation between form dimension findex and meaning dimension mindex.
         """
@@ -417,6 +438,16 @@ class Lexicon:
         m = [l.get_meaning()[mdim] for l in self.entries]
         cc = np.corrcoef([f, m])
         return cc[0][1]
+
+    def distance(self, lexicon):
+        '''
+        Average distance between forms of this and another lexicon.
+        '''
+        dist = 0.0
+        for e1, e2 in zip(self.entries, lexicon.entries):
+            dist += array_distance(e1.get_form(), e2.get_form())
+        dist /= self.nlex
+        return dist
 
     # def make_patgen(self, npats):
     #     return PatGen(npats, patterns=self.make_patterns(npats))
@@ -436,7 +467,7 @@ class Lex(list):
         self.nvalues = lexicon.nvalues
         # Make Lex arbitrary even if Lexicon is supposed to be iconic
         self.arbitrary = arbitrary
-        if not isinstance(form, Form):
+        if not isinstance(form, (Form, np.ndarray)):
             form = self.make_form(meaning, form_space, index)
         list.__init__(self, [meaning, form])
 
@@ -566,6 +597,24 @@ class Form(np.ndarray):
              value = round(100 * value)
              s += "{:> 4}".format(value)
          return s
+
+     def separate(self, form2, amount=0.05):
+         '''
+         Move this Form away from form2.
+         '''
+         print("** Separating {} from {}".format(self, form2))
+         # Find the dimension where the 2 forms are closest
+         diffs = self - form2
+         for dim in range(len(self)):
+             diff = diffs[dim]
+             mult = (1.0 - abs(diff)) * amount
+             incr = mult if diff > 0 else -mult
+             self[dim] += incr
+#         nearest_dim = np.argmin(np.abs(diffs))
+#         diff = diffs[nearest_dim]
+#         incr = amount if diff > 0 else -amount
+#         self[nearest_dim] += incr
+         print(" ** New values: {}".format(self))
 
      @staticmethod
      def make_random_form(nvalues, length, forms, threshold=0.4):

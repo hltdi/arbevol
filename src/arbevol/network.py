@@ -38,6 +38,8 @@ class Network:
         # A list of layers in input - hidden - output order
         self.layers = layers
         # By default this is a supervised pattern associator
+        # Either False, True, or an int, representing the index of the layer
+        # where the target is to be presented
         self.supervised = supervised
         self.has_bias = True
         self.competitive = False
@@ -52,6 +54,8 @@ class Network:
         # Whether this joint network, or lower network that is part of joint network,
         # is properly connected
         self.connected = True
+        # Other network that must be changed when this one is reconnected
+        self.other_connect = None
         if not initialized:
             self.initialize()
 
@@ -109,11 +113,21 @@ class Network:
             l.update_error(delay=0, verbose=verbose)
 
     def update_weights(self, lr=None, verbose=0):
-        '''Update the weights into each layer other than the first.'''
-        for l in reversed(self.layers[1:]):
-            l.update_weights(lr=lr, verbose=verbose)
+        '''
+        Update the weights into each layer other than the first.
+        If lr is a dict, use separate LRs for different layers.
+        '''
+        lrdict = isinstance(lr, dict)
+        for i, l in zip(range(len(self.layers)-1,0,-1), reversed(self.layers[1:])):
+            if lrdict:
+                lr1 = lr.get(i)
+            else:
+                lr1 = lr
+            l.update_weights(lr=lr1, verbose=verbose)
 
-    def step(self, pattern, train=True, show_act=False, lr=None, seqfirst=False, verbose=0):
+    def step(self, pattern, train=True, lr=None, seqfirst=False,
+             input_layer=0, output_layer=-1,
+             show_act=False, verbose=0):
         '''
         Run the network on one pattern, returning the error and []
         (winner for CompetNetwork).
@@ -126,8 +140,12 @@ class Network:
         self.propagate_forward(verbose=verbose)
         # Figure the error into each output unit, given a target sublist
         if self.supervised and pattern[1] is not None:
+            if type(self.supervised) == int:
+                target_layer_i = self.supervised
+            else:
+                target_layer_i = -1
             # If this is the recurrent layer, also set recurrent deltas
-            error += self.layers[-1].do_errors(pattern[1])
+            error += self.layers[target_layer_i].do_errors(pattern[1])
             self.target = pattern[1]
         if train:
             # If we're training, propagate error back
@@ -173,7 +191,7 @@ class Network:
     def join(network1, network2):
         """
         Combine networks. Output layer of network1 must match input
-        layer of network2 in units.
+        layer of network2 in length.
         """
         if network1.layers[-1].size != network2.layers[0].size:
             print("Can't combine incompatible networks {} and {}".format(network1, network2))
@@ -189,6 +207,8 @@ class Network:
         network.joint_reconnect = (hid1, bottom2)
         network.connected = True
         network1.connected = False
+        network.other_connect = network1
+        network1.other_connect = network
         # Needed so we can reset it before training testing network 1
 #        hid1._layer = top1
         bottom2.weights = top1.weights
@@ -196,7 +216,7 @@ class Network:
         bottom2.deltas = np.copy(top1.deltas)
         return network
 
-    def reconnect(self, other):
+    def reconnect(self):
         """
         Reconnect joint network or joint network component.
         """
@@ -210,8 +230,26 @@ class Network:
             hid = self.layers[-2]
         print("Reconnecting {} with {}".format(top, hid))
         top.connect(hid)
-        other.connected = False
+        self.other_connect.connected = False
         self.connected = True
+
+    # def adjust_lr(self, lr, layers=None):
+    #     '''
+    #     Temporarily set LR for specified layers, all if layers is None.
+    #     '''
+    #     layers = layers or range(1, len(self.layers))
+    #     for li in layers:
+    #         layer = self.layers[li]
+    #         layer.lr = lr
+    #
+    # def reset_lr(self, layers=None):
+    #     """
+    #     Reset LR for specified layers to original LR.
+    #     """
+    #     layers = layers or range(1, len(self.layers))
+    #     for li in layers:
+    #         layer = self.layers[li]
+    #         layer.lr = layer.orig_lr
 
 class Layer:
     '''A group of units and the weights into them. May be a recurrent layer.'''
@@ -237,6 +275,7 @@ class Layer:
                  spec_weights = None, # initial weights to use instead of random ones
                  gain=1.0,            # gain for the activation function (if non-linear)
                  lr=None,             # learning rate
+                 orig_lr=None,        # original learning rate, so it can be reset
                  do_update=True,      # whether to update weights into layer
                  momentum=0,          # momentum if is to be used
                  grad_clip=2.0,       # clip gradient norm here
@@ -270,6 +309,7 @@ class Layer:
         self.deltas = []
         self.gain = gain
         self.lr = lr or Network.LR
+        self.orig_lr = self.lr
         self.do_update = do_update
         # Only needed for leaky RELU
         self.act_arg = None
@@ -579,7 +619,7 @@ class Layer:
 #            if grad_norm > self.grad_clip:
 #                self.clip_gradients(grad_norm)
         lr = lr or self.lr
-#        print("LR {}".format(lr))
+#        print("LR for {}: {}".format(self, lr))
 #        if delay > 0:
 #            print("Updating recurrent weights, delay: {}".format(delay))
         if self.array:

@@ -312,20 +312,22 @@ def array_distance(a1, a2):
 
 def nearest_array(array, arrays):
     """
-    Nearest array in arrays to array.
+    Nearest array in arrays to array and its index.
     """
     minm = 1000.0
     closest = None
+    closest_i = -1
 #    print("** Closest for {}".format(array))
-    for a in arrays:
+    for i, a in enumerate(arrays):
         d = array_distance(array, a)
 #        print("**  checking {}".format(a))
 #        print("**  distance: {}".format(d))
         if d < minm:
             minm = d
             closest = a
+            closest_i = i
 #    print("** winner: {}".format(closest))
-    return closest
+    return closest, closest_i
 
 # Activation functions
 

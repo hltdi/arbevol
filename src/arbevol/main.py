@@ -29,7 +29,7 @@ from population import *
 
 print("Welcome to arbevol, a program for investigating the learning of evolution of words.")
 
-def init_pop(nmeanings=20, nhid=20, mlength=5, flength=5, noise=0.05, mvalues=4, iconic=True):
+def init_pop(nmeanings=50, nhid=20, mlength=5, flength=5, noise=0.05, mvalues=4, iconic=True):
     pop = Population(4, iconic=iconic, nmeanings=nmeanings, nhid=nhid,
                      mlength=mlength, flength=flength, noise=noise, mvalues=mvalues)
     return pop[0]

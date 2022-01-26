@@ -10,7 +10,6 @@ class Population(list):
                  mlength=6, flength=6, nhid=20, nmeanings=10, noise=0.1,
                  mvalues=4,
                  compprob=0.0, prodprob=0.0):
-        print("Creating population of size {}".format(size))
         self.size = size
         self.mlength = mlength
         self.flength = flength
@@ -22,8 +21,10 @@ class Population(list):
         self.compprob = compprob
         self.prodprob = prodprob
         self.make_environment()
+        print("Creating population of size {} with lexicon of size {}".format(size, nmeanings))
         for i in range(size):
             self.add()
+        # Initialize Teacher
 
     def add(self):
         self.append(Person(self, teacher=not self))
@@ -58,8 +59,11 @@ class Person:
             self.make_lexicon(iconic=population.iconic,
                               compprob=population.compprob,
                               prodprob=population.prodprob)
-            self.compexp, self.prodexp = self.make_experiments()
-            self.jointexp = self.make_joint_experiment()
+            self.compexp, self.prodexp, self.jointexp = \
+            self.create_experiments(self, self)
+            self.init()
+#            self.compexp, self.prodexp = self.make_experiments()
+#            self.jointexp = self.make_joint_experiment()
         else:
             self.lexicon = None
 
@@ -90,7 +94,7 @@ class Person:
     def make_joint_experiment(self):
         jointpatfunc = self.lexicon.make_joint_patfunc()
         return \
-        Experiment("PC{}".format(self.id),
+        Experiment("PCE{}".format(self.id),
                    network=self.joint_network,
                    test_nearest=True,
                    conditions=[[jointpatfunc, jointpatfunc]])
@@ -118,34 +122,64 @@ class Person:
                           conditions=[[prodpatfunc, prodpatfunc]])
         return comp, prod
 
-    def address(self, addressee):
-        """
-        Try all of self's Lex forms on addressee, comparing addressee's output
-        meanings to input meanings to self.
-        """
+    def create_experiments(self, teacher, student):
+        # Teacher's lexicon
+        lexicon = teacher.lexicon
+        entries = lexicon.entries
+        # Student's networks
+        compnet = student.networks[0]
+        prodnet = student.networks[1]
+        jointnet = student.joint_network
+        # Patterns and pattern generation functions
+        comppats = lexicon.comppats #[l.make_comprehension_IT(simple=True) for l in entries]
+        prodpats = lexicon.prodpats # [l.make_production_IT(simple=True) for l in entries]
+        jointpats = lexicon.jointpats # [[l.get_meaning(), l.get_meaning()] for l in entries]
+        meaningtargfunc = lambda: [e[0] for e in entries]
+        formtargfunc = lambda: [e[1] for e in entries]
+        comppatfunc = self.make_patfunc(comppats, meaningtargfunc)
+        prodpatfunc = self.make_patfunc(prodpats, formtargfunc)
+        jointpatfunc = self.make_patfunc(jointpats, meaningtargfunc)
+        comp = \
+        Experiment("C{}".format(student.id), network=compnet,
+                   test_nearest=True, conditions=[[comppatfunc, comppatfunc]])
+        prod = \
+        Experiment("P{}".format(student.id), network=prodnet,
+                   test_nearest=True, conditions=[[prodpatfunc, prodpatfunc]])
+        joint = \
+        Experiment("PC{}".format(self.id), network=jointnet,
+                   test_nearest=True, conditions=[[jointpatfunc, jointpatfunc]])
+        return comp, prod, joint
 
-    def self_teach(self, trials_per_lex=200, joint_trials_per_lex=100):
+    # def address(self, addressee):
+    #     """
+    #     Try all of self's Lex forms on addressee, comparing addressee's output
+    #     meanings to input meanings to self.
+    #     """
+
+    def init(self, trials_per_lex=300, joint_trials_per_lex=200):
         """
         Train on the Person's own Lexicon.
         """
         nlex = self.population.nmeanings
-        print("{} teaching itself...".format(self))
+        print("{} initializing themself...".format(self))
         # Train comprehension network
         print("\nTRAINING COMPREHENSION NETWORK")
-        self.compexp.run(trials_per_lex * nlex)
+        self.compexp.run(trials_per_lex * nlex, lr=0.1)
         # Train production network
         print("\nTRAINING PRODUCTION NETWORK")
-        self.networks[1].reconnect(self.joint_network)
-        self.prodexp.run(trials_per_lex * nlex)
+        self.networks[1].reconnect()
+        self.prodexp.run(trials_per_lex * nlex, lr=0.1)
         # Train joint network
         print("\nTRAINING JOINT NETWORK")
-        self.joint_network.reconnect(self.networks[1])
-        self.jointexp.run(joint_trials_per_lex * nlex, lr=0.01)
+        self.run_joint(self.jointexp, joint_trials_per_lex * nlex, lr=0.01)
         # Save successful form representations from joint network in lexicon
         print("\nUPDATING LEXICON FORMS")
         run_err, miss_err, index_err, form_dict = \
         self.jointexp.test_all(record=2)
-        self.lexicon.update_forms(form_dict)
+        self.lexicon.update_forms(form_dict, index_err)
+        if not index_err:
+            return
+        # At least one target category error, so retrain
 
     def make_patfunc(self, patterns, target_func):
         '''
@@ -163,81 +197,156 @@ class Person:
             return [input, target], 0
         return PatGen(nlex, function=patfunc, targets=target_func)
 
-    def make_joint_TS_networks(self, student):
-        network1 = Network.join(student.networks[1], self.networks[0])
-        network2 = Network.join(self.networks[1], student.networks[0])
-#        for teachout in network1.layers[]
+    # def make_joint_TS_networks(self, student):
+    #     """
+    #     Make networks combining this (teacher) and student networks.
+    #     """
+    #     # Student production, teacher comprehension
+    #     network1 = Network.join(student.networks[1], self.networks[0])
+    #     # Teacher production, student comprehension
+    #     network2 = Network.join(self.networks[1], student.networks[0])
+    #     return network1, network2
 
-    def teach(self, student, trials_per_lex=400, joint_trials_per_lex=200):
+    def make_joint_TS_experiments(self, student):
+        jointpatfunc = \
+        self.make_patfunc(self.lexicon.jointpats,
+                          lambda: [e[0] for e in self.lexicon.entries])
+        # Student production, teacher comprehension
+        network1 = Network.join(student.networks[1], self.networks[0])
+        # Teacher production, student comprehension
+        network2 = Network.join(self.networks[1], student.networks[0])
+        exp1 = \
+        Experiment("P{}->C{}".format(student.id, self.id),
+                   network=network1, test_nearest=True,
+                   conditions=[[jointpatfunc, jointpatfunc]])
+        exp2 = \
+        Experiment("P{}->C{}".format(self.id, student.id),
+                   network=network2, test_nearest=True,
+                   conditions=[[jointpatfunc, jointpatfunc]])
+        return exp1, exp2
+
+    def gen_PC_target(self, jointnet, lexicon, miss_index, incr=0.1):
+        """
+        A function that generates a form target for the output layer of
+        the prodnet, which is the middle layer of the joint PC network.
+        """
+        # The form output by the network
+        form = jointnet.layers[2].get_activations()
+        # The form associated with the incorrect meaning
+        miss_form = lexicon.entries[miss_index].get_form()
+        # Differences between form dimensions
+        diffs = form - miss_form
+        nearest_index = np.argmin(np.abs(diffs))
+        nearest_diff = diffs[nearest_index]
+        target = np.copy(form)
+        targ_incr = incr if nearest_diff > 0 else -incr
+        target[nearest_index] += targ_incr
+        return target
+
+    def run_joint(self, exp, ntrials, lr=0.01):
+        """
+        Reconnect joint network, run it, and then reconnect prod network.
+        """
+        self.joint_network.reconnect()
+        exp.run(ntrials, lr=lr)
+        self.networks[1].reconnect()
+
+    def test_joint(self, exp, record=2, update=False, verbose=0):
+        """
+        Reconnect joint network, test it, and then reconnect prod network.
+        """
+        self.joint_network.reconnect()
+        run_err, miss_err, index_err, form_dict =\
+        exp.test_all(record=record, verbose=verbose)
+        self.networks[1].reconnect()
+        if update:
+            self.lexicon.update_forms(form_dict, index_err)
+        return run_error, miss_err, index_err, form_dict
+
+    def adjust_misses(self, exp, layer=2, verbose=0):
+        """
+        Test on the joint multi-Person experiment, for each miss,
+        adjusting the form representation from the lower network's
+        output away from the form representation associated with the
+        incorrect meaning.
+        """
+        run_err, miss_err, index_err, form_dict = \
+        exp.test_all(record=layer, verbose=verbose)
+        if index_err:
+            # There were missed meanings
+            for pindex, err_index in index_err.items():
+                orig_form = self.lexicon.entries[pindex].get_form()
+                err_form = self.lexicon.entries[err_index].get_form()
+#                print("** Error with {}->{}".format(pindex, err_index))
+#                print("** Moving {} away from {}".format(orig_form, err_form))
+                orig_form.separate(err_form)
+
+#    @staticmethod
+#    def run_teaching_joint(teacher, student, exp, ntrials, lr=0.01):
+#        """
+#        Run network, then reset LR for component networks.
+#        """
+
+    def teach(self, student, trials_per_lex=300, joint_trials_per_lex=200):
         """
         Train student on self's current lexicon.
         """
         print("{} TEACHING {}...".format(self, student))
-        # patterns, patfuncs, and experiments for student
-        comppats = [l.make_comprehension_IT(simple=True) for l in self.lexicon.entries]
-        prodpats = [l.make_production_IT(simple=True) for l in self.lexicon.entries]
-        jointpats = [[l.get_meaning(), l.get_meaning()] for l in self.lexicon.entries]
-        meaningtargfunc = lambda: [e[0] for e in self.lexicon.entries]
-        formtargfunc = lambda: [e[1] for e in self.lexicon.entries]
-        comppatfunc = self.make_patfunc(comppats, meaningtargfunc)
-        prodpatfunc = self.make_patfunc(prodpats, formtargfunc)
-        jointpatfunc = self.make_patfunc(jointpats, meaningtargfunc)
-        compexp = Experiment("CE{}->{}".format(self.id, student.id),
-                             network=student.networks[0],
-                             test_nearest=True,
-                             conditions=[[comppatfunc, comppatfunc]])
-        prodexp = Experiment("PE{}->{}".format(self.id, student.id),
-                             network=student.networks[0],
-                             test_nearest=True,
-                             conditions=[[prodpatfunc, prodpatfunc]])
-        jointexp = Experiment("JE{}->{}".format(self.id, student.id),
-                              network=student.joint_network,
-                              test_nearest=True,
-                              conditions=[[jointpatfunc, jointpatfunc]])
+        compexp, prodexp, jointexp = self.create_experiments(self, student)
         nlex = self.population.nmeanings
+        flength = self.population.flength
+        environment = self.population.environment
+        nvalues = environment.mvalues
         # Train comprehension network
         print("\nTRAINING COMPREHENSION NETWORK")
         compexp.run(trials_per_lex * nlex)
         # Train production network
         print("\nTRAINING PRODUCTION NETWORK")
-        student.networks[1].reconnect(student.joint_network)
+        student.networks[1].reconnect()
         prodexp.run(trials_per_lex * nlex)
         # Train joint network
         print("\nTRAINING JOINT NETWORK")
-        student.joint_network.reconnect(student.networks[1])
-        jointexp.run(joint_trials_per_lex * nlex, lr=0.01)
+        student.run_joint(jointexp, joint_trials_per_lex * nlex, lr=0.01)
         # Save successful form representations from joint network in lexicon
-        print("\nUPDATING LEXICON FORMS")
+        print("\nASSIGNING STUDENT LEXICON FORMS")
         run_err, miss_err, index_err, form_dict = jointexp.test_all(record=2)
+        # For forms that failed, use teacher's forms
+        student_lex_patterns = \
+        [[m, Form(form_dict.get(i, gen_array(nvalues, flength)))] \
+         for i, (m, f) in enumerate(self.lexicon.entries)]
+        student.lexicon = \
+        Lexicon(student.id, environment, flength, nlex=nlex,
+                patterns=student_lex_patterns)
 #        self.lexicon.update_forms(form_dict)
+        print("\nCREATING TEACHER-STUDENT JOINT NETWORKS AND EXPERIMENTS")
+        joint_ts_exp1, joint_ts_exp2 = self.make_joint_TS_experiments(student)
+#        joint_ts1, joint_ts2 = self.make_joint_TS_networks(student)
+#        joint_ts_exp1 = \
+#        Experiment("PE{}->CE{}".format(student.id, self.id),
+#                   network=joint_ts1, test_nearest=True,
+#                   conditions=[[jointpatfunc, jointpatfunc]])
+#        joint_ts_exp2 = \
+#        Experiment("PE{}->CE{}".format(self.id, student.id),
+#                   network=joint_ts2, test_nearest=True,
+#                   conditions=[[jointpatfunc, jointpatfunc]])
+        print("\nTraining Student->Teacher Network")
+#        joint_ts_exp1.run(joint_trials_per_lex * nlex,
+#                          lr={3: 0.005, 4: 0.005, 1: 0.01, 2: 0.01})
+        print("\nTraining Teaching->Student Network")
+#        joint_ts_exp2.run(joint_trials_per_lex * nlex,
+#                          lr={1: 0.005, 2: 0.005, 3: 0.01, 4: 0.01})
+        # Reset LR
+#        self.networks[0].reset_lr()
+#        self.networks[1].reset_lr()
+        return joint_ts_exp1, joint_ts_exp2
 
-        return compexp, prodexp, jointexp
-#        jointnetworks = self.make_joint_TS_networks(student)
-        # jointexp1 = \
-        # Experiment("P{}->C{}E".format(self.id, student.id),
-        #            network=student.joint_network,
-        #            test_nearest=True,
-        #            conditions=[[jointpatfunc, jointpatfunc]])
-        # name = '{}->{}_T'.format(self, student)
-        # conditions = self.lexicon.spec_exp_conditions(comptrain, prodtrain)
-        # exp = Experiment(name, network=student.network,
-        #                  conditions=conditions,
-        #                  test_nearest=True)
-        # # train student
-        # current_error = 100.0
-        # total_trials = 0
-        # print("Training...")
-        # while total_trials < trial_thresh:
-        #     new_error = exp.run(ntrials)
-        #     change = current_error - new_error
-        #     if new_error < error_thresh or change < change_thresh:
-        #         break
-        #     current_error = new_error
-        #     total_trials += ntrials
-        # if make_lex:
-        #     print("Creating new lexicon...")
-        #     # create new lexicon for student
-        #     lexicon = Lexicon.from_network(exp, self.lexicon.meanings, student)
-        #     student.lexicon = lexicon
-        #
-        # return self, student, exp
+    def communicate(self, other):
+        '''
+        Test comprehension and production between this and another Person.
+        '''
+        print("\n{} AND {} COMMUNICATING".format(self, other))
+        joint_exp1, joint_exp2 = self.make_joint_TS_experiments(other)
+        print("\n{} SPEAKING, {} LISTENING".format(other, self))
+        joint_exp1.test_all(record=2)
+        print("\n{} SPEAKING, {} LISTENING".format(self, other))
+        joint_exp2.test_all(record=2)

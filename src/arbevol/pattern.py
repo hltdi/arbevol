@@ -292,11 +292,11 @@ class PatGen:
         if not targets:
             print("No targest for get_nearest!")
             return None, False
-        nearest = nearest_array(pattern, targets)
+        nearest, nearest_index = nearest_array(pattern, targets)
 #        if verbose:
 #            print("** nearest to {}:\n{}".format(pattern, nearest))
 #            print("** {}".format(nearest is target))
-        return nearest, nearest is target
+        return nearest is target, nearest, nearest_index
 
     def __call__(self, index=-1):
         '''What to do when the object is called.'''
