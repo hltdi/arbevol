@@ -285,17 +285,16 @@ class PatGen:
 
     def get_nearest(self, pattern, target, verbose=0):
         """
-        Find the nearest pattern among patterns to patterns,
+        Find the nearest pattern among patterns to pattern,
         returning that pattern and True if it's target, False if it's not.
         """
         targets = self.get_targets()
         if not targets:
-            print("No targest for get_nearest!")
+            print("No target for get_nearest!")
             return None, False
         nearest, nearest_index = nearest_array(pattern, targets)
-#        if verbose:
-#            print("** nearest to {}:\n{}".format(pattern, nearest))
-#            print("** {}".format(nearest is target))
+#        if nearest is not target:
+#            print("** nearest {} {} {}".format(pattern, nearest, nearest_index))
         return nearest is target, nearest, nearest_index
 
     def __call__(self, index=-1):

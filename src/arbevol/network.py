@@ -28,6 +28,10 @@ def random_weight(wt_range, neg=True):
 class Network:
 
     LR = 0.1
+    # Joined network types
+    simple = 0
+    joint = 1
+    paired = 2
 
     def __init__(self, name, layers, array=True, supervised=True,
                  initialized=False, verbose=0):
@@ -48,7 +52,7 @@ class Network:
         self.array = array
         self.verbose = verbose
         # Whether this is joint network, composed of two interconnected networks
-        self.joint = False
+        self.join_type = Network.simple
         # Lower network and upper network layers to be reconnected
         self.joint_reconnect = None
         # Whether this joint network, or lower network that is part of joint network,
@@ -60,7 +64,7 @@ class Network:
             self.initialize()
 
     def __repr__(self):
-        return "<< " + self.name + " >>"
+        return "{ " + self.name + " }"
 
     def initialize(self):
         '''
@@ -100,10 +104,10 @@ class Network:
                         l.weights[u][w] = weights[index]
                         index += 1
 
-    def propagate_forward(self, verbose=0):
+    def propagate_forward(self, noisy_layer=-1, verbose=0):
         '''Propagate activation forward through the network.'''
-        for l in self.layers[1:]:
-            l.update(verbose=verbose)
+        for i, l in enumerate(self.layers[1:]):
+            l.update(noise=noisy_layer==i, verbose=verbose)
 
     def propagate_backward(self, verbose=0):
         '''Propagate error backward through the network.'''
@@ -126,7 +130,7 @@ class Network:
             l.update_weights(lr=lr1, verbose=verbose)
 
     def step(self, pattern, train=True, lr=None, seqfirst=False,
-             input_layer=0, output_layer=-1,
+             input_layer=0, output_layer=-1, noisy_layer=-1,
              show_act=False, verbose=0):
         '''
         Run the network on one pattern, returning the error and []
@@ -135,9 +139,11 @@ class Network:
         error = 0.0
         self.pre_stuff(self.target if self.supervised else [], seqfirst=seqfirst)
         # Clamp the input Layer to the list within the input part of the pattern.
-        self.layers[0].clamp(pattern[0] if self.supervised else pattern)
+        input = pattern[0] if self.supervised else pattern
+        self.layers[0].clamp(input, noise=noisy_layer==0)
+#        self.layers[0].clamp(pattern[0] if self.supervised else pattern)
         # Update the other layers in sequence
-        self.propagate_forward(verbose=verbose)
+        self.propagate_forward(noisy_layer=noisy_layer, verbose=verbose)
         # Figure the error into each output unit, given a target sublist
         if self.supervised and pattern[1] is not None:
             if type(self.supervised) == int:
@@ -188,7 +194,7 @@ class Network:
             l.show_weights()
 
     @staticmethod
-    def join(network1, network2):
+    def join(network1, network2, type=1):
         """
         Combine networks. Output layer of network1 must match input
         layer of network2 in length.
@@ -200,11 +206,12 @@ class Network:
         top1 = network1.layers[-1]
         bottom2 = network2.layers[0]
         layers = network1.layers[:-1] + network2.layers
-        network = Network("{}++{}".format(network1, network2),
+        network = Network("{}->{}".format(network1, network2),
                           layers, initialized=True)
         bottom2.connect(hid1)
-        network.joint = True
-        network.joint_reconnect = (hid1, bottom2)
+#        print("{} connecting {}:{} to {}:{}".format(network, network1, hid1, network2, bottom2))
+        network.join_type = type
+        network.joint_reconnect = (hid1, top1, bottom2)
         network.connected = True
         network1.connected = False
         network.other_connect = network1
@@ -216,20 +223,31 @@ class Network:
         bottom2.deltas = np.copy(top1.deltas)
         return network
 
+    def disconnect(self):
+        """
+        Disconnect this network and reconnect associated
+        network.
+        """
+        if self.other_connect:
+            self.other_connect.reconnect()
+
     def reconnect(self):
         """
         Reconnect joint network or joint network component.
         """
-        if self.connected:
-            # No need to reconnect
-            return
-        if self.joint:
-            hid, top = self.joint_reconnect
+#        if self.connected and self.join_type > :
+#            # No need to reconnect if this is a simple or joint (within-Person) network
+#            return
+        if self.join_type != Network.simple:
+            hid1, top1, bot2 = self.joint_reconnect
+            bot2.weights = top1.weights
+            bot2.errors = np.copy(top1.errors)
+            bot2.deltas = np.copy(top1.deltas)
         else:
-            top = self.layers[-1]
-            hid = self.layers[-2]
-        print("Reconnecting {} with {}".format(top, hid))
-        top.connect(hid)
+            bot2 = self.layers[-1]
+            hid1 = self.layers[-2]
+#        print("Reconnecting {}:{} with {}:{}".format(self, hid1, self, bot2))
+        bot2.connect(hid1)
         self.other_connect.connected = False
         self.connected = True
 
@@ -266,6 +284,9 @@ class Layer:
 
     # Leaky RELU slope
     leaky_slope = 0.01
+
+    # Noise SD
+    sd = 0.05
 
     def __init__(self, name,
                  size=10,             # number of units
@@ -507,12 +528,13 @@ class Layer:
             w = l2a(w)
         return w
 
-    def clamp(self, v):
+    def clamp(self, v, noise=False):
         '''Clamp pattern vector v on this Layer.'''
-        # %% OR SHOULD THIS BE A COPY
-        self.activations = v
-#        for i in range(min([self.size, len(v)])):
-#            self.activations[i] = v[i]
+        if noise:
+            self.activations = noisify(v, sd=Layer.sd)
+        else:
+            # %% COPY?
+            self.activations = v
 
     def get_unit_output_error(self, targ, act):
         """
@@ -537,7 +559,11 @@ class Layer:
             np.copyto(self.deltas, self.errors)
         else:
             self.deltas = self.errors * self.act_slope(self.activations, var=self.act_arg)
-        return math.sqrt(np.sum(self.errors * self.errors) / self.size)
+        try:
+            err_squared = np.square(self.errors)
+        except RuntimeWarning:
+            print("Oops; errors {}".format(self.errors))
+        return math.sqrt(np.sum(err_squared) / self.size)
 
 #         error = 0.0
 #         for i in range(self.size):
@@ -556,7 +582,11 @@ class Layer:
 
     def gradient_norm(self):
 #        if self.array:
-        sumofsquares = np.sum(np.square(self.gradients))
+        try:
+            grad_square = np.square(self.gradients)
+        except RuntimeWarning:
+            print("Oops; gradients {}".format(self.gradients))
+        sumofsquares = np.sum(grad_square)
         norm = math.sqrt(sumofsquares)
         return norm
         # sumofsqrs = 0.0
@@ -778,28 +808,29 @@ class Layer:
             if delay < 3 and len(self.delayed_activations) > delay+1:
                 self.update_error(delay=delay+1, verbose=verbose)
 
-    def update(self, verbose=0):
+    def update(self, noise=False, verbose=0):
         '''Update unit activations.'''
-        if self.array:
-            inp = self.get_input(verbose=verbose)
-            if verbose:
-                print(" Input: {}".format(inp))
-            activations = self.act_function(inp, self.threshold, self.gain, self.act_arg)
-            self.activations = activations
-            if verbose:
-                print(" New activations: {}".format(self.activations))
-        else:
-            for index in range(self.size):
-                if verbose:
-                    print("Updating {}|{}".format(self, index))
-                inp = self.get_unit_input(index, verbose=verbose)
-                if verbose:
-                    print(" Input: {}".format(inp))
-                # Apply activation function
-                activation = self.act_function(inp, self.threshold, self.gain, self.act_arg)
-                self.activations[index] = activation
-                if verbose:
-                    print(" New activation: {}".format(self.activations[index]))
+        inp = self.get_input(verbose=verbose)
+        if verbose:
+            print(" Input: {}".format(inp))
+        activations = self.act_function(inp, self.threshold, self.gain, self.act_arg)
+        if noise:
+            activations = noisify(activations, sd=Layer.sd)
+        self.activations = activations
+        if verbose:
+            print(" New activations: {}".format(self.activations))
+        # else:
+        #     for index in range(self.size):
+        #         if verbose:
+        #             print("Updating {}|{}".format(self, index))
+        #         inp = self.get_unit_input(index, verbose=verbose)
+        #         if verbose:
+        #             print(" Input: {}".format(inp))
+        #         # Apply activation function
+        #         activation = self.act_function(inp, self.threshold, self.gain, self.act_arg)
+        #         self.activations[index] = activation
+        #         if verbose:
+        #             print(" New activation: {}".format(self.activations[index]))
 
     def get_bias(self, unit):
         '''The bias into unit.'''

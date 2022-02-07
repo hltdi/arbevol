@@ -317,16 +317,25 @@ def nearest_array(array, arrays):
     minm = 1000.0
     closest = None
     closest_i = -1
+    if np.isnan(array).any():
+        print("***WARNING: trying to find nearest array to {}".format(array))
+        return closest, closest_i
 #    print("** Closest for {}".format(array))
     for i, a in enumerate(arrays):
         d = array_distance(array, a)
+        if d > 1000.0:
+            print("***WARNING: distance between {} and {} is {}".format(array, a, d))
 #        print("**  checking {}".format(a))
 #        print("**  distance: {}".format(d))
         if d < minm:
             minm = d
             closest = a
             closest_i = i
-#    print("** winner: {}".format(closest))
+    #    print("** winner: {}".format(closest))
+    if closest_i < 0:
+        print("***WARNING trying to find nearest_array to {}".format(array))
+#        for a in arrays:
+#            print("  {}".format(a))
     return closest, closest_i
 
 # Activation functions

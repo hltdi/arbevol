@@ -65,7 +65,7 @@ class Experiment:
         return "{}:{}".format(self.name, self.time)
 
     def step(self, train=True, patgen=None, show_error=False, show_act=False,
-             input_layer=0, output_layer=-1,
+             input_layer=0, output_layer=-1, noisy_layer=-1,
              pg_kind='full', lr=None, index=-1, verbose=0):
         '''
         Run the Experiment on one pattern, return the target pattern, error.
@@ -80,6 +80,7 @@ class Experiment:
         error = \
         self.network.step(pat, train=train, seqfirst=seqfirst, lr=lr,
                           input_layer=input_layer, output_layer=output_layer,
+                          noisy_layer=noisy_layer,
                           show_act=show_act, verbose=verbose)
         if self.training and train:
             self.errors.append(error[0])
@@ -94,14 +95,15 @@ class Experiment:
         return pat, error[0], error[1]
 
     def run(self, n=5000, train=True, lr=None,
-            input_layer=0, output_layer=-1,
-            show_act=False,
+            input_layer=0, output_layer=-1, noisy_layer=-1,
+            show_act=False, verbose=0,
             test_every=1000,
             error_thresh=0.02, error_change_thresh=-0.05, miss_thresh=0.0):
         '''
         Run the Experiment on n patterns, training it and incrementing trials
         if train is True.
         '''
+#        print("** Training {}, LR {}".format(self.network, lr))
         self.current_error = 0.0
         trial0 = self.trials
         patgen = self.get_patgen(train=train)
@@ -112,31 +114,36 @@ class Experiment:
         trials = 0
         for i in range(n):
             trials += 1
-            pat_err_win = self.step(train, patgen=patgen, lr=lr,
-                                    input_layer=input_layer, output_layer=output_layer,
-                                    show_act=show_act, show_error=False)
-            self.current_error += pat_err_win[1]
             if test_every and i % test_every == 0:
-                print("Testing at {} trials: ".format(i), end=' ')
+                if verbose:
+                    print("Testing at {:6} trials: ".format(i), end=' ')
                 old_test_error = test_error
-                test_error, miss_error, misses, record = self.test_all()
+                test_error, miss_error, misses, record = self.test_all(verbose=verbose)
                 error_change = old_test_error - test_error
                 if test_error <= error_thresh or \
                     miss_error <= miss_thresh or \
                     error_change < error_change_thresh:
                     break
+            pat_err_win = self.step(train, patgen=patgen, lr=lr,
+                                    input_layer=input_layer, output_layer=output_layer,
+                                    noisy_layer=noisy_layer,
+                                    show_act=show_act, show_error=False)
+            self.current_error += pat_err_win[1]
         error = self.current_error / trials
-        print("\n{} TRIALS".format(self.trials))
-        print('RUN ERROR: {:.3f}'.format(error))
+        print("{:6} trials, errors -- run: {:.3f}".format(self.trials, error), end='')
         if test_every:
-            print('TEST ERROR: {:.3f}'.format(test_error))
+            print(', test: {:.3f}'.format(test_error), end='')
             if self.test_nearest:
-                print('MISS ERROR: {:.3f}'.format(miss_error))
+                print(', miss: {:.3f}'.format(miss_error))
+            else:
+                print()
+        else:
+            print()
         return error, test_error, miss_error
 
     def test_all(self, pg_kind='full', reps=1,
-                 input_layer=0, output_layer=-1,
-                 record=False, verbose=0):
+                 input_layer=0, output_layer=-1, noisy_layer=-1,
+                 record=None, verbose=0):
         '''Test the network on all patterns reps times.'''
         current_error = 0.0
         nearest_misses = 0
@@ -149,6 +156,7 @@ class Experiment:
             while True:
                 pat_err_win = self.step(False, patgen=patgen, index=pindex,
                                         input_layer=input_layer, output_layer=output_layer,
+                                        noisy_layer=noisy_layer,
                                         show_error=verbose>0, show_act=verbose>0)
                 if not pat_err_win[0]:
                     # step() returns empty pattern for this pindex
@@ -160,21 +168,23 @@ class Experiment:
                                 pindex_errors=pindex_errors, record=record,
                                 recorded=recorded, nearest_misses=nearest_misses,
                                 verbose=0)
-                if verbose:
-                    print()
+#                if verbose:
+#                    print()
                 pindex += 1
 
         nitems = pindex * reps
 #        print("N items: {}".format(nitems))
         # At this point pindex is number of test patterns
         run_error = current_error / nitems
-        print('Run error: {: .3f}'.format(run_error), end=' ')
+        if verbose:
+            print('Run error: {: .3f}'.format(run_error), end=' ')
         if self.test_nearest:
             nearest_error = nearest_misses / nitems
 #            for i in pindex_errors:
 #                pindex_errors[i] /= reps
-            print("Miss error: {: .2f}".format(nearest_error))
-        else:
+            if verbose:
+                print("Miss error: {: .2f}".format(nearest_error))
+        elif verbose:
             print()
         if record:
             for i in recorded:
@@ -192,8 +202,8 @@ class Experiment:
                 nearest_misses += 1
                 # Assumes reps=1 or only records the last miss
                 pindex_errors[pindex] = nrst_i
-                if verbose:
-                    print("Missed target, found {}".format(nrst_i))
+#                if verbose:
+#                print("***Missed target {}: {}, found {}: {}".format(pindex, target, nrst_i, nrst))
             elif verbose:
                 print("Hit target")
             if record != None and pindex >= 0 and (hit or not self.record_only_hits):
