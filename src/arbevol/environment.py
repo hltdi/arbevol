@@ -5,7 +5,7 @@ Environment: meanings and time
 
 import numpy as np
 from utils import *
-from itertools import permutations
+from itertools import permutations, combinations
 
 class Environment:
 
@@ -30,26 +30,31 @@ class Environment:
             self.n_per_cluster = 0
         # Meanings grouped by cluster
         self.clusters = {}
+        self.clus_indices = {}
         if init_meanings:
             self.read_meanings(init_meanings)
         else:
             self.init_meanings(self.nmeanings, self.cluster_spec, self.n_per_cluster)
+        self.between_cluster_pairs = None
+        self.within_cluster_pairs = None
         print("Creating environment: mlength {}, mvalues {}, {} meanings".format(mlength, mvalues, self.nmeanings), end='')
         if clusters:
-            print(", {} clusters with {} of dimensions fixed".format(clusters[1], clusters[0]))
+            print(", clusters: {} of {} meanings each, {} of dimensions fixed".format(clusters[1], self.n_per_cluster, clusters[0]))
         else:
             print()
 
     def init_meanings(self, n, cluster_spec=None, n_per_cluster=0):
 #        print("** init_meaning: {}, {}, {}".format(n, cluster_spec, n_per_cluster))
         if cluster_spec:
+            index = 0
             for ci, spec in enumerate(cluster_spec):
                 for i in range(n_per_cluster):
-                    self.make_meaning(spec=spec, cluster=ci)
+                    self.make_meaning(index, spec=spec, cluster=ci)
+                    index += 1
         nmeanings = len(self.meanings)
         # Make additional meanings not belonging to clusters
         for i in range(nmeanings, n):
-            self.make_meaning()
+            self.make_meaning(i)
 
     def max_nmeanings(self):
         return np.power(self.mvalues, self.mlength)
@@ -61,7 +66,7 @@ class Environment:
         """
         return value * (1.0 / (self.mvalues-1.0))
 
-    def make_meaning(self, spec=None, cluster=-1):
+    def make_meaning(self, index, spec=None, cluster=-1):
         """
         Create a unique meaning.
         """
@@ -72,7 +77,7 @@ class Environment:
 #                    meaning[1] = 0.05
             found = True
             for m in self.meanings:
-                if (cluster < 0 and distance(meaning, m) < 0.5) or (cluster >= 0 and (meaning==m).all()):
+                if (cluster < 0 and distance(meaning, m) < 0.1) or (cluster >= 0 and (meaning==m).all()):
 #                if (meaning == m).all():
                     found = False
                     break
@@ -83,7 +88,9 @@ class Environment:
             if cluster >=0:
                 if cluster not in self.clusters:
                     self.clusters[cluster] = []
+                    self.clus_indices[cluster] = []
                 self.clusters[cluster].append(meaning)
+                self.clus_indices[cluster].append(index)
             return meaning
 
     # def make_meaning_cluster(self, mdims, n):
@@ -101,51 +108,55 @@ class Environment:
         for each cluster.
         """
         n_fixed_dims = round(fixed_frac * self.mlength)
-        fixed_dims = range(0, n_fixed_dims)
-        clusters = []
-        # First create cluster with constant values
-        if self.mvalues > n:
-            # There are more meaning feature values than clusters, so
-            # distribute the values evenly from 0 to 1
-            frac = 1.0 / (n-1)
-            values = [round((i+1) * frac * self.mvalues) for i in range(n-2)]
-            d = {}
-            for dim in fixed_dims:
-                d[dim] = 0.0
-            clusters.append(d)
-            for v in values:
-                d = {}
-                value = self.value2act(v)
-                for dim in fixed_dims:
-                    d[dim] = value
-                clusters.append(d)
-            d = {}
-            for dim in fixed_dims:
-                d[dim] = 1.0
-            clusters.append(d)
-        else:
-            for value in range(self.mvalues):
-                d = {}
-                for dim in fixed_dims:
-                    d[dim] = self.value2act(value)
-                clusters.append(d)
-
-        if len(clusters) >= n:
-            return clusters[:n]
+#        fixed_dims = range(0, n_fixed_dims)
+#        clusters = []
+        fixed_values = non_corr_lists(self.mvalues, n_fixed_dims, n)
+        clusters = \
+        [dict((i, self.value2act(v)) for i, v in enumerate(ls)) for ls in fixed_values]
+        return clusters
+        # # First create cluster with constant values
+        # if self.mvalues > n:
+        #     # There are more meaning feature values than clusters, so
+        #     # distribute the values evenly from 0 to 1
+        #     frac = 1.0 / (n-1)
+        #     values = [round((i+1) * frac * self.mvalues) for i in range(n-2)]
+        #     d = {}
+        #     for dim in fixed_dims:
+        #         d[dim] = 0.0
+        #     clusters.append(d)
+        #     for v in values:
+        #         d = {}
+        #         value = self.value2act(v)
+        #         for dim in fixed_dims:
+        #             d[dim] = value
+        #         clusters.append(d)
+        #     d = {}
+        #     for dim in fixed_dims:
+        #         d[dim] = 1.0
+        #     clusters.append(d)
+        # else:
+        #     for value in range(self.mvalues):
+        #         d = {}
+        #         for dim in fixed_dims:
+        #             d[dim] = self.value2act(value)
+        #         clusters.append(d)
+        #
+        # if len(clusters) >= n:
+        #     return clusters[:n]
 #        l = len(clusters)
         # Create clusters with different values on each dimension
-        perms = list(permutations(range(self.mvalues)))
-        random.shuffle(perms)
-        for p in perms:
-            p = list(p)
-            if len(fixed_dims) < self.mvalues:
-                p = p + p
-            d = {}
-            for val, dim in zip(p, fixed_dims):
-                d[dim] = self.value2act(val)
-            clusters.append(d)
-            if len(clusters) == n:
-                return clusters
+#        print("**", fixed_values)
+#        perms = list(permutations(range(self.mvalues)))
+#        random.shuffle(perms)
+#        for p in perms:
+#            p = list(p)
+#            if len(fixed_dims) < self.mvalues:
+#                p = p + p
+#            d = {}
+#            for val, dim in zip(p, fixed_dims):
+#                d[dim] = self.value2act(val)
+#            clusters.append(d)
+#            if len(clusters) == n:
 #        for i in range(l, n):
 #            values1 = list(range(self.mvalues))
 #            random.shuffle(values1)
@@ -158,6 +169,36 @@ class Environment:
 #                d[dim] = self.value2act(val)
 #            clusters.append(d)
 #        return clusters
+
+    def get_between_cluster_pairs(self):
+        """
+        Pairs of meaning/entry indices between clusters.
+        """
+        if self.between_cluster_pairs:
+            return self.between_cluster_pairs
+        pairs = []
+        cindices = list(self.clus_indices.values())
+        for ci, cindices1 in enumerate(cindices[:-1]):
+            for cindex1 in cindices1:
+                for cindices2 in cindices[ci+1:]:
+                    for cindex2 in cindices2:
+                        pairs.append((cindex1, cindex2))
+        self.between_cluster_pairs = pairs
+        return pairs
+
+    def get_within_cluster_pairs(self):
+        """
+        Pairs of meaning/entry indices within clusters.
+        """
+        if self.within_cluster_pairs:
+            return self.within_cluster_pairs
+        pairs = []
+        cindices = list(self.clus_indices.values())
+        for ci in cindices:
+            pairs1 = combinations(ci, 2)
+            pairs.extend(pairs1)
+        self.within_cluster_pairs = pairs
+        return pairs
 
     def write_meanings(self, filename):
         """

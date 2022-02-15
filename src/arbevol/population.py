@@ -3,15 +3,68 @@ arbevol: Population of Persons.
 """
 
 from lex import *
+import time
+
+def meta_experiment(npops=10, nruns=10, popsize=10, nlex=50, mvalues=5, clusters=None,
+                    match=True, teach=True,
+                    iconic=True, constant_flip=True, nearest_cluster=False,
+                    file=None):
+    string = "Training {} populations of size {} for {} runs, {} lexicons of size {}"
+    print(string.format(npops, popsize, nruns, "iconic" if iconic else "arbitrary", nlex))
+    results = []
+    all_results = []
+    if clusters:
+        print("Meaning cluster properties: {}/{}".format(clusters, nearest_cluster))
+    else:
+        print("Random meanings")
+    for i in range(npops):
+        print("++++++++++++++++++++++++")
+        print("POPULATION {}".format(i))
+        print("++++++++++++++++++++++++")
+        p = Population(popsize, nmeanings=nlex, mvalues=mvalues, clusters=clusters,
+                       iconic=iconic, nearest_cluster=nearest_cluster, terse=True)
+        if nruns:
+            p.run(nruns, match=match, teach=teach, terse=True)
+        all_results.append(p.stats)
+        results.append((p.stats['m'][-1][1], p.stats['d'][-1][1], p.stats['i'][-1][1]))
+    m = sum([x[0][0] for x in results])/npops, sum([x[0][1] for x in results])/npops
+    d = sum([x[1] for x in results])/npops
+    i = sum([x[2][0] for x in results])/npops, sum([x[2][1] for x in results])/npops
+    print("m {}, d {}, i {}".format([np.round(mm, 3) for mm in m],
+                                     np.round(d, 3),
+                                    [np.round(ii, 3) for ii in i]))
+    if file:
+        pass
+    return results, all_results
+
+    def write_meta(filename):
+        """
+        Write the Lexicon's entries to a file.
+        """
+        path = os.path.join('results', filename)
+        with open(path, 'w') as out:
+            print(file=out)
+
+#    def read_meta(filename, mvalues=5, fvalues=5):
+#        path = os.path.join('data', filename)
+#        entries = []
+#        with open(path) as infile:
+#            for line in infile:
+#                meaning, form = line.split(" ‖ ")
+#                meaning = Meaning.read(meaning, mvalues)
+#                form = Form.read(form, fvalues)
+#                entries.append([meaning, form])
+#        return entries
 
 class Population(list):
 
     def __init__(self, size, iconic=True, init_teachers=0.1,
-                 mlength=6, flength=6, nhid=20, nmeanings=10, noise=0.1,
-                 mvalues=4, clusters=None, sep_amount=0.01,
+                 mlength=5, flength=5, nhid=20, nmeanings=10, noise=0.1,
+                 mvalues=5, clusters=None, sep_amount=0.02, nearest_cluster=False,
                  init_lex=None, init_meanings=None,
-#                 compprob=0.0, prodprob=0.0,
-                 dont_init=False):
+                 # iconicity parameters
+                 constant_flip=True, deiconize=0.5,
+                 dont_init=False, terse=False):
         self.size = size
         self.mlength = mlength
         self.flength = flength
@@ -21,25 +74,31 @@ class Population(list):
         self.nmeanings = nmeanings
         self.noise = noise
         self.sep_amount = sep_amount
-#        self.compprob = compprob
-#        self.prodprob = prodprob
+        self.constant_flip = constant_flip
+        self.deiconize = deiconize
         self.teachers = set()
         # Whether all Persons have been taught a Lexicon
         self.taught = False
         self.runs = 0
-        self.mutualities = []
-        self.distances = []
-        self.iconicities = []
+        self.commruns = 0
+        self.stats = {'m': [], 'd': [], 'i': [], 'c': []}
+#        self.mutualities = []
+#        self.distances = []
+#        self.iconicities = []
+        # Whether nearest target counts as correct if in right cluster
+        self.nearest_cluster = nearest_cluster
+        print("Creating population of {}: lexicon size {}, form length {}, hidden layer size {}".format(size, nmeanings, flength, nhid))
+        if iconic:
+            print("  Iconicity: deiconization {}, constant flip feature {}, nearest cluster {}".format(deiconize, constant_flip, nearest_cluster))
         self.make_environment(clusters=clusters, init_meanings=init_meanings)
-        print("Creating population of size {} with lexicon of size {}".format(size, nmeanings))
         for i in range(size):
-            self.add(dont_init=dont_init, init_lex=init_lex)
+            self.add(dont_init=dont_init, init_lex=init_lex, terse=terse)
         if not dont_init:
-            self.teach()
+            self.teach(terse=terse)
 
-    def add(self, dont_init=False, init_lex=None):
+    def add(self, dont_init=False, init_lex=None, terse=False):
         self.append(Person(self, teacher=not self, dont_init=dont_init,
-                           init_lex=init_lex))
+                           init_lex=init_lex, terse=terse))
 
     def extend_lexicons(self, meanings):
         """
@@ -58,9 +117,47 @@ class Population(list):
                     clusters=clusters, init_meanings=init_meanings)
         self.environment = e
 
-#    def communicate(self, p1, p2, verbose=0):
+    @staticmethod
+    def make_pairs(n):
+        items1 = list(range(n))
+        items2 = list(range(n))
+        random.shuffle(items2)
+        overlap = True
+        while overlap:
+            o = []
+            for i in range(n):
+                if items1[i] == items2[i]:
+                    o.append(i)
+            if not o:
+                overlap = False
+            else:
+                positions = list(range(n))
+                swap1 = o[0]
+                positions.remove(swap1)
+                swap2 = positions[0]
+                items2[swap1], items2[swap2] = items2[swap2], items2[swap1]
+        return list(zip(items1, items2))
+
+    def communicate(self, p1, p2, verbose=0, terse=False):
 #        p1.teach(p2, verbose=verbose)
-#        p2.learn_from_misses(p1, verbose=verbose)
+        p2.match_meanings(p1, verbose=verbose, terse=terse)
+
+    # def communicate(self, iterations=1, score=True):
+    #     '''
+    #     On each iteration, for each Person, select a random Person
+    #     to communicate with.
+    #     '''
+    #     for i in range(iterations):
+    #         print(">>>>>>>>COMMUNICATION ITERATION {}<<<<<<<<".format(self.commruns))
+    #         indices = list(range(self.size))
+    #         random.shuffle(indices)
+    #         for index in indices:
+    #             student = self[index]
+    #             teacher = self.select_other(index)
+    #             student.match_meanings(teacher, sep_amount=self.sep_amount)
+    #         self.commruns += 1
+    #     if score:
+    #         self.update_stats()
 
     def add_to_teachers(self, person):
         self.teachers.add(person)
@@ -78,31 +175,52 @@ class Population(list):
         student = random.choice(list(self.get_untaught()))
         return teacher, student
 
-    def run(self, iterations, score=True):
+    def run(self, iterations=1, match=True, teach=True, random_form=False, score=2,
+            terse=False):
         '''
         On each iteration, for each Person, select a random Person
         to communicate with.
         '''
+        if len(self.teachers) == 1:
+            self.teach(random_form=random_form, terse=terse)
         for i in range(iterations):
             print(">>>>>>>>ITERATION {}<<<<<<<<".format(self.runs))
-            indices = list(range(self.size))
-            random.shuffle(indices)
-            for index in indices:
-                student = self[index]
-                teacher1 = self.select_other(index)
+            pairs = Population.make_pairs(self.size)
+            for studenti, teacheri in pairs:
+                student = self[studenti]
+                teacher = self[teacheri]
+#            indices = list(range(self.size))
+#            random.shuffle(indices)
+#            for index in indices:
+#                student = self[index]
+#                teacher1 = self.select_other(index)
 #                other_indices = list(range(self.size))
 #                other_indices.remove(index)
 #                teacher = self[random.choice(other_indices)]
 #                t, s = self.pair()
-#                student.learn_from_misses(teacher1, sep_amount=self.sep_amount)
-                teacher2 = self.select_other(index)
-                teacher2.teach(student)
-#                self.communicate(teacher, student)
+#                student.match_meanings(teacher1, sep_amount=self.sep_amount)
+#                teacher = self.select_other(index)
+                match_out = None
+                if match:
+                    match_out = teacher.match_meanings(student, sep_amount=self.sep_amount, terse=terse)
+                if teach and (match_out or not match):
+                    teacher.teach(student, random_form=random_form, terse=terse)
             self.runs += 1
+            if score and self.runs % score == 0:
+                self.update_stats()
+
         if score:
-            self.mutualities.append((self.runs, self.mean_mutuality()))
-            self.distances.append((self.runs, self.mean_distance()))
-            self.iconicities.append((self.runs, self.mean_iconicity()))
+            self.update_stats()
+
+    def update_stats(self):
+        last_update = self.stats['i'][-1][0] if self.stats['i'] else -1
+        if self.runs > last_update:
+            print("--Updating stats--")
+            self.stats['m'].append((self.runs, self.mean_mutuality()))
+            self.stats['d'].append((self.runs, self.mean_distance()))
+            self.stats['i'].append((self.runs, (self.mean_iconicity(), self.mean_m_iconicity())))
+            self.stats['c'].append((self.runs, self.mean_dc()))
+#            self.stats['c'].append((self.runs, [np.rond()]))
 
     def select_other(self, index):
         """
@@ -112,25 +230,24 @@ class Population(list):
         other_indices.remove(index)
         return self[random.choice(other_indices)]
 
-    def teach(self, one_teacher=True):
+    def teach(self, one_teacher=False, random_form=False, terse=False):
         """
         Have a Lexicon taught to the whole Population,
         by default by the single initial master teacher.
         """
         teacher = self[0]
         if teacher not in self.teachers:
-            teacher.init(sep_amount=self.sep_amount)
+            teacher.init(sep_amount=self.sep_amount, terse=terse)
         for student in self[1:]:
 #            self.communicate(teacher, student)
-            teacher.teach(student)
+            teacher.teach(student, random_form=random_form, terse=terse)
 #            student.teach(teacher)
-#            teacher.learn_from_misses(student)
-#            student.learn_from_misses(teacher)
+#            teacher.match_meanings(student)
+#            student.match_meanings(teacher)
             if not one_teacher:
-                teacher = student
-        self.mutualities.append((0, self.mean_mutuality()))
-        self.distances.append((0, self.mean_distance()))
-        self.iconicities.append((0, self.mean_iconicity()))
+                teacher = random.choice(list(self.teachers))
+#                teacher = student
+        self.update_stats()
 
     def mean_distance(self):
         """
@@ -146,20 +263,35 @@ class Population(list):
             distances.append(d)
         return sum(distances) / self.size
 
+    def mean_dc(self):
+        """
+        Mean distance correlations within Lexicons of Persons.
+        """
+        corrs = np.array([0.0, 0.0, 0.0])
+        for person in self:
+            corrs += person.lexicon.dc()
+        return tuple(np.round(corrs / self.size, 3))
+
     def mean_iconicity(self):
         """
         Mean iconicity of Lexicons of Persons.
         """
-        return sum([p.lexicon.iconicity() for p in self]) / self.size
+        return np.round(sum([p.lexicon.iconicity() for p in self]) / self.size, 3)
+
+    def mean_m_iconicity(self):
+        """
+        Mean iconicity of Lexicons of Persons.
+        """
+        return np.round(sum([p.lexicon.m_iconicity() for p in self]) / self.size, 3)
 
     def mutuality(self, p1, p2):
         """
         Measure of the extent to which Persons p1 and p2 understanding
         one another.
         """
-        run_err1, miss_err1, err_index1 = p1.test_paired(p2)
-        run_err2, miss_err2, err_index2 = p2.test_paired(p1)
-        return (run_err1 + run_err2) / 2.0, (miss_err1 + miss_err2) / 2.0
+        run_err1, miss_err1, err_index1, form_dict1 = p1.test_paired(p2)
+        run_err2, miss_err2, err_index2, form_dict2 = p2.test_paired(p1)
+        return round((run_err1 + run_err2) / 2.0, 3), round((miss_err1 + miss_err2) / 2.0, 3)
 
     def mean_mutuality(self):
         m = [0.0, 0.0]
@@ -172,14 +304,14 @@ class Population(list):
                 n += 1
         m[0] /= n
         m[1] /= n
-        return m
+        return np.round(m, 3)
 
 class Person:
 
     n=0
 
     def __init__(self, population, teacher=True, newarb=0.1, init_lex=None,
-                 dont_init=False):
+                 dont_init=False, terse=False):
         # dont_init for debugging
         self.id = Person.n
         self.teacher = teacher
@@ -187,6 +319,9 @@ class Person:
         self.environment = population.environment
         self.noise = population.noise
         self.newarb = newarb
+        self.meanings = self.environment.meanings
+        self.clusters = self.environment.clus_indices
+        self.noisify_errors = False
         Person.n += 1
 #        if teacher:
 #            self.network = None
@@ -199,10 +334,9 @@ class Person:
             self.lexicon = self.make_lexicon(iconic=population.iconic, init_lex=init_lex)
 #                              compprob=population.compprob,
 #                              prodprob=population.prodprob
-            self.compexp, self.prodexp, self.jointexp = \
-            self.create_experiments(self)
+            self.compexp, self.prodexp, self.jointexp = self.make_experiments(self)
             if not dont_init:
-                self.init()
+                self.init(terse=terse)
 #            self.compexp, self.prodexp = self.make_experiments()
 #            self.jointexp = self.make_joint_experiment()
         else:
@@ -225,23 +359,8 @@ class Person:
                            Layer('phid', nhid),
                            Layer('formout', flength)])]
 
-    # def make_network(self, mlength, flength, nhid):
-    #     return \
-    #     Network(str(self.id),
-    #             layers = [Layer('in', mlength+flength),
-    #                       Layer('hid', nhid),
-    #                       Layer('out', mlength+flength)])
-    #
     def make_joint_network(self):
         return Network.join(self.networks[1], self.networks[0], Network.joint)
-
-    def make_joint_experiment(self):
-        mean2mean_patfunc = self.lexicon.make_joint_patfunc()
-        return \
-        Experiment("PCE{}".format(self.id),
-                   network=self.joint_network,
-                   test_nearest=True,
-                   conditions=[[mean2mean_patfunc, mean2mean_patfunc]])
 
     def make_lexicon(self, iconic=True, init_lex=None):
         """
@@ -250,11 +369,17 @@ class Person:
         """
         patterns = None
         if init_lex:
-            patterns = Lexicon.read(init_lex, self.population.mvalues, self.population.mvalues)
+            patterns = \
+            Lexicon.read(init_lex, self.population.mvalues, self.population.mvalues)
+#                         constant_flip=self.population.constant_flip,
+#                         deiconize=self.population.deiconize)
         return \
         Lexicon(self.id, self.environment, self.population.flength,
                 nlex=self.population.nmeanings,
+                constant_flip=self.population.constant_flip,
+                deiconize=self.population.deiconize,
                 noise=self.noise, iconic=iconic,
+                init=True,
                 patterns=patterns)
 
     def extend_lexicon(self, meanings, iconic=True):
@@ -264,23 +389,12 @@ class Person:
         """
         self.lexicon.add(meanings)
 
-    # def make_experiment(self, name='lex_exp'):
-    #     return Experiment(name, network=self.network,
-    #                       conditions=self.lexicon.exp_conds,
-    #                       test_nearest=True)
-
-    # def make_experiments(self):
-    #     comppatfunc = self.lexicon.make_comp_patfunc()
-    #     prodpatfunc = self.lexicon.make_prod_patfunc()
-    #     comp = Experiment("CE{}".format(self.id), network=self.networks[0],
-    #                       test_nearest=True,
-    #                       conditions=[[comppatfunc, comppatfunc]])
-    #     prod = Experiment("PE{}".format(self.id), network=self.networks[1],
-    #                       test_nearest=True,
-    #                       conditions=[[prodpatfunc, prodpatfunc]])
-    #     return comp, prod
-
-    def create_experiments(self, student):
+    def make_experiments(self, student):
+        """
+        Make experiments for training student on this Person's (master teacher's)
+        Lexicon. If student is self, these are for the master teacher's
+        initialization self-teaching.
+        """
         # Teacher's lexicon
         lexicon = self.lexicon
         entries = lexicon.entries
@@ -288,14 +402,18 @@ class Person:
         compnet = student.networks[0]
         prodnet = student.networks[1]
         jointnet = student.joint_network
+        teacher_prodnet = self.networks[1]
         # Patterns and pattern generation functions
         comppats = lambda: lexicon.comppats #[l.make_comprehension_IT(simple=True) for l in entries]
         prodpats = lambda: lexicon.prodpats # [l.make_production_IT(simple=True) for l in entries]
 #        mean2mean_pats = lambda: lexicon.mean2mean_pats # [[l.get_meaning(), l.get_meaning()] for l in entries]
         meaningtargfunc = lambda: [e[0] for e in entries]
-        formtargfunc = lambda: [e[1] for e in entries]
-        comppatfunc = self.make_patfunc(comppats, meaningtargfunc)
-        prodpatfunc = self.make_patfunc(prodpats, formtargfunc)
+        if self == student:
+            formtargfunc = lambda: [e[1] for e in entries]
+        else:
+            formtargfunc = lambda: [self.get_form_target(teacher_prodnet, e[0], e[1]) for e in entries]
+        comppatfunc = self.make_patfunc(comppats, meaningtargfunc, noisify_input=student!=self)
+        prodpatfunc = self.make_patfunc(prodpats, formtargfunc, noisify_target=student!=self)
         mean2mean_patfunc = self.make_mean2mean_func()
 #        patfunc(mean2mean_pats, meaningtargfunc)
         comp = \
@@ -306,72 +424,124 @@ class Person:
                    test_nearest=True, conditions=[[prodpatfunc, prodpatfunc]])
         joint = \
         Experiment("PC{}".format(self.id), network=jointnet,
-                   test_nearest=True, conditions=[[mean2mean_patfunc, mean2mean_patfunc]])
+                   test_nearest=True, nearest_cluster=self.population.nearest_cluster,
+                   conditions=[[mean2mean_patfunc, mean2mean_patfunc]])
         return comp, prod, joint
 
-    # def address(self, addressee):
-    #     """
-    #     Try all of self's Lex forms on addressee, comparing addressee's output
-    #     meanings to input meanings to self.
-    #     """
+    def get_form_target(self, teacher_prod_net, meaning, lexform, verbose=0):
+        teacher_prod_net.reconnect()
+#        print("** Getting form from target {} with input {}".format(teacher_prod_net, meaning))
+        teacher_prod_net.step([meaning, None], train=False, verbose=verbose)
+        teacher_out = teacher_prod_net.layers[-1].activations
+        if Form.roundQ:
+            Form.round(teacher_out, nvalues=self.population.mvalues)
+#        print("** Got target {}".format(teacher_out))
+#        print("** (Expected target {})".format(lexform))
+        return teacher_out
 
-    def init(self, trials_per_lex=500, joint_trials_per_lex=300,
-             sep_amount=0.01, new_meanings=None, verbose=0):
+    # def make_paired_experiments(self, other):
+    #     self_in_exp = other_in_exp = None
+    #     if other.id in self.paired_exps:
+    #         self_in_exp = self.paired_exps[other.id]
+    #     if self.id in other.paired_exps:
+    #         other_in_exp = other.paired_exps[self.id]
+    #     if not self_in_exp or not other_in_exp:
+    #         mean2mean_patfunc = self.make_mean2mean_func()
+    #         if not other_in_exp:
+    #             network1 = Network.join(other.networks[1], self.networks[0],
+    #                                     Network.paired)
+    #             other_in_exp = \
+    #             Experiment("P{}->C{}".format(other.id, self.id),
+    #                        network=network1, test_nearest=True,
+    #                        nearest_cluster=self.population.nearest_cluster,
+    #                        conditions=[[mean2mean_patfunc, mean2mean_patfunc]])
+    #             network1.disconnect()
+    #             other.paired_exps[self.id] = other_in_exp
+    #         if not self_in_exp:
+    #             network2 = Network.join(self.networks[1], other.networks[0],
+    #                                     Network.paired)
+    #             self_in_exp = \
+    #             Experiment("P{}->C{}".format(self.id, other.id),
+    #                        network=network2, test_nearest=True,
+    #                        nearest_cluster=self.population.nearest_cluster,
+    #                        conditions=[[mean2mean_patfunc, mean2mean_patfunc]])
+    #             network2.disconnect()
+    #             self.paired_exps[other.id] = self_in_exp
+    #     return other_in_exp, self_in_exp
+
+    def make_paired_experiments(self, other):
+        other_out_exp = other_in_exp = None
+        if other.id in self.paired_exps:
+            other_out_exp = self.paired_exps[other.id]
+        if self.id in other.paired_exps:
+            other_in_exp = other.paired_exps[self.id]
+        if not other_out_exp or not other_in_exp:
+            if not other_in_exp:
+                # other production in, self comprehension out
+                otherinfunc = self.make_paired_patfunc(other)
+                selfcomp = self.networks[0]
+                other_in_exp = \
+                Experiment("P{}->C{}".format(other.id, self.id),
+                           network=selfcomp, test_nearest=True,
+                           nearest_cluster=self.population.nearest_cluster,
+                           conditions=[[otherinfunc, otherinfunc]])
+                other.paired_exps[self.id] = other_in_exp
+            if not other_out_exp:
+                # other comprehension out, self production in
+                otheroutfunc = other.make_paired_patfunc(self)
+                othercomp = other.networks[0]
+                other_out_exp = \
+                Experiment("P{}->C{}".format(self.id, other.id),
+                           network=othercomp, test_nearest=True,
+                           nearest_cluster=self.population.nearest_cluster,
+                           conditions=[[otheroutfunc, otheroutfunc]])
+                self.paired_exps[other.id] = other_out_exp
+        return other_in_exp, other_out_exp
+
+    def init(self, trials_per_lex=100, joint_trials_per_lex=50,
+             sep_amount=0.01, new_meanings=None, verbose=0, terse=False):
         """
         Train on the Person's own Lexicon.
         """
         nlex = self.population.nmeanings
+        print(">>>>>>>>INITIALIZATION<<<<<<<<")
         if new_meanings:
-            print("MT {} RE-SELF-INITIALIZING WITH NEW MEANINGS...".format(self))
+            print("- - - {} RE-SELF-INITIALIZING WITH NEW MEANINGS - - -".format(self))
         else:
-            print("MT {} SELF-INITIALIZING...".format(self))
+            print("- - - {} SELF-INITIALIZING - - -".format(self))
         if verbose:
             print("** Initial lexicon")
             self.lexicon.show()
+        icon1 = round(self.lexicon.iconicity(), 3)
+        micon1 = round(self.lexicon.m_iconicity(), 3)
+        if not terse:
+            print("Initial iconicity: {}".format(icon1))
+        self.population.stats['i'].append((-1, [icon1, micon1]))
         # Train comprehension network
-        print("Comprehension".format(self), end='; ')
-        self.compexp.run(trials_per_lex * nlex, lr=0.1)
+        if not terse:
+            print("Comprehension".format(self), end='; ')
+        self.compexp.run(trials_per_lex * nlex, lr=0.1, terse=terse)
         # Train production network
-        print("Production   ".format(self), end='; ')
+        if not terse:
+            print("Production   ".format(self), end='; ')
         self.networks[1].reconnect()
-        self.prodexp.run(trials_per_lex * nlex, lr=0.1)
+        self.prodexp.run(trials_per_lex * nlex, lr=0.1, terse=terse)
         # Train joint network
-        print("Prod->comp   ".format(self), end='; ')
-        self.run_joint(self.jointexp, joint_trials_per_lex * nlex, lr=0.01)
+        if not terse:
+            print("Prod->comp   ".format(self), end='; ')
+        miss_thresh = -0.1 if self.population.nearest_cluster else 0.0
+        self.run_joint(self.jointexp, joint_trials_per_lex * nlex, lr=0.05,
+                       miss_thresh=miss_thresh, terse=terse)
         # Save successful form representations from joint network in lexicon
-        print("Updating forms in {}'s lexicon".format(self))
-        run_err, miss_err, index_err, form_dict = \
-        self.jointexp.test_all(record=2)
-#        if not index_err:
-#            return
+#        if not terse:
+#            print("Updating forms in {}'s lexicon".format(self))
+        run_err, miss_err, index_err, form_dict = self.test_joint(self.jointexp)
+        if index_err and not terse:
+            print("Updating {}".format(index_err))
         self.lexicon.update_forms(form_dict, index_err, sep_amount=sep_amount,
                                   verbose=verbose)
         # At least one target category error, so retrain
         self.population.add_to_teachers(self)
-
-    def make_patfunc(self, patterns_func, target_func, noisify=False):
-        '''
-        Make a pattern generation function for training or testing a network on
-        comprehension or production or joint production-comprehension.
-        '''
-        nlex = self.population.nmeanings
-        def patfunc(index=-1):
-            patterns = patterns_func()
-            if index < 0:
-                input, target = random.choice(patterns)
-            elif index >= nlex:
-                return False, 0
-            else:
-                input, target = patterns[index]
-            if noisify and self.noise:
-                input = noisify(input, sd=self.noise)
-            return [input, target], 0
-        return PatGen(nlex, function=patfunc, targets=target_func)
-
-    def make_mean2mean_func(self):
-        return \
-        self.make_patfunc(lambda: self.lexicon.mean2mean_pats,
-                          lambda: [e.get_meaning() for e in self.lexicon.entries])
 
     # def make_paired_networks(self, student):
     #     """
@@ -383,45 +553,203 @@ class Person:
     #     network2 = Network.join(self.networks[1], student.networks[0])
     #     return network1, network2
 
-    def make_paired_experiments(self, other):
-        self_in_exp = other_in_exp = None
-        if other.id in self.paired_exps:
-            self_in_exp = self.paired_exps[other.id]
-        if self.id in other.paired_exps:
-            other_in_exp = other.paired_exps[self.id]
-        if not self_in_exp or not other_in_exp:
-            mean2mean_patfunc = self.make_mean2mean_func()
-#            self.make_patfunc(lambda: self.lexicon.mean2mean_pats,
-#                              lambda: [e[0] for e in self.lexicon.entries])
-            if not other_in_exp:
-                network1 = Network.join(other.networks[1], self.networks[0],
-                                        Network.paired)
-                other_in_exp = \
-                Experiment("P{}->C{}".format(other.id, self.id),
-                           network=network1, test_nearest=True,
-                           conditions=[[mean2mean_patfunc, mean2mean_patfunc]])
-                network1.disconnect()
-                other.paired_exps[self.id] = other_in_exp
-            if not self_in_exp:
-                network2 = Network.join(self.networks[1], other.networks[0],
-                                        Network.paired)
-                self_in_exp = \
-                Experiment("P{}->C{}".format(self.id, other.id),
-                           network=network2, test_nearest=True,
-                           conditions=[[mean2mean_patfunc, mean2mean_patfunc]])
-                network2.disconnect()
-                self.paired_exps[other.id] = self_in_exp
-        return other_in_exp, self_in_exp
+    def teach(self, student, trials_per_lex=100, joint_trials_per_lex=50,
+              lr=0.1, joint_lr=0.05, dont_train=False,
+              random_form=False, verbose=0, terse=False):
+        """
+        Train student on self's current lexicon.
+        dont_train is there for debugging.
+        """
+#        if student in self.population.teachers:
+            # student is already a teacher, so do less training
+#            trials_per_lex //= 2
+#            joint_trials_per_lex //= 2
+#            lr //= 2
+#            joint_lr //= 2
+        print("- - - {} TEACHING {} - - -".format(self, student))
+#        print("** trials per lex {}".format(trials_per_lex))
+        compexp, prodexp, jointexp = self.make_experiments(student)
+        if dont_train:
+            return compexp, prodexp, jointexp
+        nlex = self.population.nmeanings
+        flength = self.population.flength
+        environment = self.environment
+        nvalues = environment.mvalues
+        if verbose:
+            print("** New lexicon")
+            self.lexicon.show()
+        if not terse:
+            print("Comprehension", end='; ')
+        compexp.run(trials_per_lex * nlex, lr=lr, miss_thresh=-.1, terse=terse)
+        if not terse:
+            print("Production   ", end='; ')
+        student.networks[1].reconnect()
+        prodexp.run(trials_per_lex * nlex, lr=lr, miss_thresh=-.1, terse=terse)
+        if not terse:
+            print("Prod->Comp   ", end='; ')
+        miss_thresh = -0.1 if self.population.nearest_cluster else 0.0
+        student.run_joint(jointexp, joint_trials_per_lex * nlex, lr=joint_lr,
+                          miss_thresh=miss_thresh, terse=terse)
+        run_err, miss_err, index_err, form_dict = self.test_joint(jointexp)
+#        jointexp.test_all(record=2)
+#        if self.clusters:
+#            out_err = self.cluster_error(index_err, miss_err)
+        if index_err and not terse:
+            print("Updating {}".format(index_err))
+        student_lex_patterns = \
+        self.make_student_lex_patterns(form_dict, index_err, nvalues, flength,
+                                       random_form=random_form)
+#        [[m, Form(form_dict.get(i, gen_array(nvalues, flength)))] \
+#         for i, (m, f) in enumerate(self.lexicon.entries)]
+#        print("Assigning forms to {}'s lexicon".format(student))
+        if verbose:
+            print("** Student lex patterns")
+            for p in student_lex_patterns:
+                print(p)
+        student.lexicon = \
+        Lexicon(student.id, environment, flength, nlex=nlex,
+                patterns=student_lex_patterns,
+                constant_flip=self.population.constant_flip,
+                deiconize=self.population.deiconize)
+        # Create student-internal experiments, if they're not already created
+        if not student.compexp:
+            student.compexp, student.prodexp, student.jointexp = \
+            student.make_experiments(student)
+        if not student.id in self.paired_exps:
+#            print("Creating joint networks and experiments")
+            other_in_exp, self_in_exp = self.make_paired_experiments(student)
+        # Add student to teacher list
+        self.population.add_to_teachers(student)
+#        return other_in_exp, self_in_exp
 
-    def run_joint(self, exp, ntrials, lr=0.01):
+    def make_student_lex_patterns(self, form_dict, index_error, nvalues, flength,
+                                  random_form=False, verbose=0):
+        '''
+        Create lexical patterns for a student network based on the saved
+        values from the joint network in form_dict.
+        For failed forms,a new form is generated by flipping the old form.
+        '''
+        patterns = []
+        old_entries = [entry.copy() for entry in self.lexicon.entries]
+        for i, (m, f) in enumerate(self.lexicon.entries):
+            if i not in index_error:
+                form = form_dict.get(i)
+                form = Form(form, nvalues=nvalues, init=False)
+            else:
+                if random_form:
+                    form = gen_array(nvalues, flength)
+                elif self.noisify_errors:
+                    if Form.roundQ:
+                        form = f.copy()
+                        Form.round(form, nvalues)
+                        if verbose:
+                            print("  ** Updating {} ->".format(form), end=' ')
+                        # Then flip one value
+                        flip_values(form, 2, nvalues, length=flength,
+                                    opts=Form.value_opts[nvalues])
+                        if verbose:
+                            print("  {}".format(form))
+                    else:
+                        form = noisify(f, sd=0.05)
+                else:
+                    # Separate form from error form
+                    form = Form(form_dict.get(i), nvalues=nvalues)
+                    error_index = index_error[i]
+                    error_form = old_entries[error_index][1]
+#                    print("** form {}, error form {}".format(form, error_form))
+                    form.separate(error_form, amount=self.population.sep_amount,
+                                  verbose=verbose)
+#                    print("** separated {}".format(form))
+#                    Form.round(form, nvalues)
+#                print("** Generating novel form for {}::{}; {} -> {}".format(i, m, f, form))
+                form = Form(form, nvalues=nvalues, init=True)
+            patterns.append([m, form])
+        return patterns
+
+    def match_meanings(self, other, exp=None, layer=2,
+                       trials_per_lex=50, joint_trials_per_lex=25, nreps=3,
+                       sep_amount=0.01, verbose=0, terse=False):
+        print("- - - {} MATCHING MEANINGS WITH {} - - -".format(self, other, sep_amount))
+        exp = exp or self.paired_exps.get(other.id)
+        nlex = self.population.nmeanings
+        environment = self.environment
+        nvalues = environment.mvalues
+        flength = self.population.flength
+        if not exp:
+            other_in, exp = self.make_paired_experiments(other)
+        n_misses = 100
+        miss_gain = -1
+        miss_thresh = -0.1 if self.population.nearest_cluster else 0.0
+        reps = 0
+        miss_err = 0.0
+        found_misses = False
+        while reps < nreps:
+#            exp.network.reconnect()
+            run_err, miss_err, index_err, form_dict = exp.test_all(record=True)
+#            , verbose=verbose)
+#            exp.network.disconnect()
+            n_new_misses = len(index_err)
+            if not found_misses and n_new_misses:
+                found_misses = True
+            miss_gain = n_misses - n_new_misses
+            n_misses = n_new_misses
+            if n_misses and miss_gain > 0:
+                if self.clusters:
+                    in_cluster = 0
+                    out_cluster = 0
+                    for l1, l2 in index_err.items():
+                        c1 = self.meanings[l1].cluster
+                        c2 = self.meanings[l2].cluster
+                        if c1 == c2:
+                            in_cluster += 1
+                        else:
+                            out_cluster += 1
+                    if not terse:
+                        print("Updating missed forms: {} inside clusters, {} outside clusters".format(in_cluster, out_cluster))
+                else:
+                    if not terse:
+                        print("Updating {} missed forms".format(len(index_err)))
+                self.lexicon.update_forms(form_dict, index_err,
+                                          sep_amount=sep_amount, verbose=verbose)
+                if not terse:
+#                    print("Retraining production and comprehension networks")
+                # Don't stop for misses and train past usual error threshold
+                    print("Production   ", end='; ')
+                self.prodexp.run(trials_per_lex * nlex, miss_thresh=-1,
+                                 error_thresh=0.002, terse=terse)
+                if not terse:
+                    print("Comprehension", end='; ')
+                self.compexp.run(trials_per_lex * nlex, miss_thresh=-1,
+                                 error_thresh=0.002, terse=terse)
+                if not terse:
+                    print("Prod->Comp   ", end='; ')
+                self.run_joint(self.jointexp, joint_trials_per_lex * nlex,
+                               miss_thresh=miss_thresh, terse=terse)
+                run_err, miss_err, index_err, form_dict = self.test_joint(self.jointexp)
+                if index_err and not terse:
+                    print("Updating forms, including internal errors {}".format(index_err))
+                self.lexicon.update_forms(form_dict, index_err, sep_amount=sep_amount, verbose=verbose)
+#                student_lex_patterns = self.make_student_lex_patterns(form_dict, nvalues, flength)
+#                self.lexicon = \
+#                Lexicon(self.id, environment, flength, nlex=nlex,
+#                        patterns=student_lex_patterns,
+#                        constant_flip=self.population.constant_flip,
+#                        deiconize=self.population.deiconize)
+                reps += 1
+            else:
+                return found_misses
+        return found_misses
+
+    def run_joint(self, exp, ntrials, lr=0.01, miss_thresh=0.0, terse=False):
         """
         Reconnect joint network, run it, and then reconnect prod network.
         """
         self.joint_network.reconnect()
-        exp.run(ntrials, lr=lr)
+        exp.run(ntrials, lr=lr, miss_thresh=miss_thresh, terse=terse)
         self.networks[1].reconnect()
 
-    def test_joint(self, exp, record=2, update=False, sep_amount=0.01, verbose=0):
+    def test_joint(self, exp, record=2, update=False, sep_amount=0.01,
+                   verbose=0, terse=False):
         """
         Reconnect joint network, test it, and then reconnect prod network.
         """
@@ -433,106 +761,91 @@ class Person:
             self.lexicon.update_forms(form_dict, index_err, sep_amount=sep_amount)
         return run_err, miss_err, index_err, form_dict
 
-    def test_paired(self, other, record=None, verbose=0):
+    def cluster_error(self, index_err, miss_err):
+        if index_err:
+            # There were misses
+            out_index_err = {}
+            in_cluster = 0
+            out_cluster = 0
+            for l1, l2 in index_err.items():
+                c1 = self.meanings[l1].cluster
+                c2 = self.meanings[l2].cluster
+                if c1 == c2:
+                    in_cluster += 1
+                else:
+                    out_cluster += 1
+                    out_index_err[l1] = l2
+            print("** in errors {}, out errors {}".format(in_cluster, out_cluster))
+            out_err = out_cluster / len(self.meanings)
+            print("** miss err {}, out miss err {}".format(miss_err, out_err))
+            return out_err
+
+    def test_paired(self, other, record=None, ignore_clusters=False, verbose=0):
         """
         Test the paired network (self's production, other's comprehension).
         """
         exp = self.paired_exps.get(other.id)
         if not exp:
             other_in, exp = self.make_paired_experiments(other)
-        exp.network.reconnect()
+#        exp.network.reconnect()
         run_err, miss_err, index_err, form_dict =\
-        exp.test_all(record=record, verbose=verbose)
-        exp.network.disconnect()
-        return run_err, miss_err, index_err
+        exp.test_all(record=record, ignore_clusters=ignore_clusters, verbose=verbose)
+#        exp.network.disconnect()
+#        if self.clusters:
+#            out_err = self.cluster_error(index_err, miss_err)
+        return run_err, miss_err, index_err, form_dict
 
-    def learn_from_misses(self, other, exp=None, layer=2, sep_amount=0.01, verbose=0):
-        print("- - - {} LEARNING FROM MISCOMMUNICATIONS WITH {} - - -".format(self, other))
-        exp = exp or self.paired_exps.get(other.id)
-        if not exp:
-            other_in, exp = self.make_paired_experiments(other)
-        n_misses = 100
-        miss_gain = -1
-        while True:
-            exp.network.reconnect()
-            run_err, miss_err, index_err, form_dict = exp.test_all(record=layer)
-#            , verbose=verbose)
-            exp.network.disconnect()
-            n_new_misses = len(index_err)
-            miss_gain = n_misses - n_new_misses
-            n_misses = n_new_misses
-            if n_misses and miss_gain > 0:
-                clusters = self.environment.clusters
-                meanings = self.environment.meanings
-                if clusters:
-                    in_cluster = 0
-                    out_cluster = 0
-                    for l1, l2 in index_err.items():
-                        c1 = meanings[l1].cluster
-                        c2 = meanings[l2].cluster
-                        if c1 == c2:
-                            in_cluster += 1
-                        else:
-                            out_cluster += 1
-                    print("Updating missed forms: {} inside clusters, {} outside clusters".format(in_cluster, out_cluster))
-                else:
-                    print("Updating {} missed forms".format(len(index_err)))
-                self.lexicon.update_forms(form_dict, index_err, sep_amount=sep_amount, verbose=verbose)
-                print("Retraining production and comprehension networks")
-                # Don't stop for misses and train past usual error threshold
-                print("Production   ", end='; ')
-                self.prodexp.run(10000, miss_thresh=-1, error_thresh=0.002)
-                print("Comprehension", end='; ')
-                self.compexp.run(10000, miss_thresh=-1, error_thresh=0.002)
-            else:
-                return
-
-    def teach(self, student, trials_per_lex=200, joint_trials_per_lex=10000,
-              lr=0.05, joint_lr=0.025, dont_train=False, verbose=0):
-        """
-        Train student on self's current lexicon.
-        dont_train is there for debugging.
-        """
-        if student in self.population.teachers:
-            # student is already a teacher, so do less training
-            trials_per_lex //= 4
-            joint_trials_per_lex //= 4
-            lr //= 10
-            joint_lr //= 10
-        print("- - - {} TEACHING {} - - -".format(self, student))
-        compexp, prodexp, jointexp = self.create_experiments(student)
-        if dont_train:
-            return compexp, prodexp, jointexp
+    def make_patfunc(self, patterns_func, target_func,
+                     cluster_func=None, noisify_input=False, noisify_target=False):
+        '''
+        Make a pattern generation function for training or testing a network on
+        comprehension or production or joint production-comprehension.
+        '''
         nlex = self.population.nmeanings
-        flength = self.population.flength
-        environment = self.environment
-        nvalues = environment.mvalues
-        print("Comprehension", end='; ')
-        compexp.run(trials_per_lex * nlex, lr=lr)
-        print("Production   ", end='; ')
-        student.networks[1].reconnect()
-        prodexp.run(trials_per_lex * nlex, lr=lr)
-        print("Prod->Comp   ", end='; ')
-        student.run_joint(jointexp, joint_trials_per_lex * nlex, lr=joint_lr)
-        run_err, miss_err, index_err, form_dict = jointexp.test_all(record=2)
-        student_lex_patterns = \
-        [[m, Form(form_dict.get(i, gen_array(nvalues, flength)))] \
-         for i, (m, f) in enumerate(self.lexicon.entries)]
-        print("Assigning forms to {}'s lexicon".format(student))
-        if verbose:
-            print("** Student lex patterns")
-            for p in student_lex_patterns:
-                print(p)
-        student.lexicon = \
-        Lexicon(student.id, environment, flength, nlex=nlex,
-                patterns=student_lex_patterns)
-        # Create student-internal experiments, if they're not already created
-        if not student.compexp:
-            student.compexp, student.prodexp, student.jointexp = \
-            student.create_experiments(student)
-        if not student.id in self.paired_exps:
-#            print("Creating joint networks and experiments")
-            other_in_exp, self_in_exp = self.make_paired_experiments(student)
-        # Add student to teacher list
-        self.population.add_to_teachers(student)
-#        return other_in_exp, self_in_exp
+        def patfunc(index=-1):
+            patterns = patterns_func()
+            if index < 0:
+                input, target = random.choice(patterns)
+            elif index >= nlex:
+                return False, 0, None
+            else:
+                input, target = patterns[index]
+            if noisify_input and self.noise:
+                input = noisify(input, sd=self.noise)
+#                print("** input:     {}".format(input))
+            if noisify_target and self.noise:
+#                print("** noisifying target: {}".format(target) end=', ')
+                target = noisify(target, sd=self.noise)
+#                print("{}".format(target))
+            return [input, target], 0, None
+        return PatGen(nlex, function=patfunc, targets=target_func, clusters=cluster_func)
+
+    def make_paired_patfunc(self, producer):
+        nlex = self.population.nmeanings
+        meanings = [l.get_meaning() for l in self.lexicon.entries]
+        prodnet = producer.networks[1]
+        target_func = lambda: [e.get_meaning() for e in self.lexicon.entries]
+        def patfunc(index=-1):
+            if index < 0:
+                meaning = random.choice(meanings)
+            elif index >= nlex:
+                return False, 0, None
+            else:
+                meaning = meanings[index]
+            # Run the producer network on the meaning and get its output
+            prodnet.step([meaning, None], train=False, show_act=False)
+            input = Form(prodnet.layers[-1].activations, nvalues=self.population.mvalues)
+            to_record = input
+            if self.noise:
+#                print("** Noisifying {} -> ".format(input), end=', ')
+                input = noisify(input, sd=self.noise)
+#                print("{}".format(input))
+            return [input, meaning], 0, to_record
+        return PatGen(nlex, function=patfunc, targets=target_func)
+
+    def make_mean2mean_func(self):
+        return \
+        self.make_patfunc(lambda: self.lexicon.mean2mean_pats,
+                          lambda: [e.get_meaning() for e in self.lexicon.entries],
+                          lambda: self.clusters,
+                          noisify_input=False, noisify_target=False)

@@ -38,7 +38,8 @@ class Experiment:
     '''A Network with a set of conditions, each with a separate pattern generator.'''
 
     def __init__(self, name, network, conditions=None, training=True,
-                 test_nearest=False, record_only_hits=True, verbose=0):
+                 test_nearest=False, nearest_cluster=False,
+                 record_only_hits=False, verbose=0):
         '''
         Initialize name, network, learning rate, conditions, error;
         add to EXPERIMENTS.
@@ -56,6 +57,7 @@ class Experiment:
         self.verbose = verbose
         self.training = training
         self.test_nearest = test_nearest
+        self.nearest_cluster = nearest_cluster
         # Record only hits
         self.record_only_hits = record_only_hits
         self.time = time.strftime("%y%m%d.%H%M")
@@ -74,9 +76,9 @@ class Experiment:
         # in a sequence (1) and/or the last pattern or sequence in an epoch (2)
         if not patgen:
             patgen = self.get_patgen(train=train, kind=pg_kind)
-        pat, seqfirst = patgen(index=index)
+        pat, seqfirst, to_record = patgen(index=index)
         if not pat:
-            return pat, 0.0, 0,0
+            return pat, 0.0, 0, None
         error = \
         self.network.step(pat, train=train, seqfirst=seqfirst, lr=lr,
                           input_layer=input_layer, output_layer=output_layer,
@@ -92,13 +94,13 @@ class Experiment:
             print('{: .3f}'.format(error[0]))
         if verbose and seqfirst:
             print("Beginning of new sequence")
-        return pat, error[0], error[1]
+        return pat, error[0], error[1], to_record
 
     def run(self, n=5000, train=True, lr=None,
             input_layer=0, output_layer=-1, noisy_layer=-1,
-            show_act=False, verbose=0,
-            test_every=1000,
-            error_thresh=0.02, error_change_thresh=-0.05, miss_thresh=0.0):
+            show_act=False, verbose=0, terse=False,
+            test_every=1000, report_current=True,
+            error_thresh=0.02, error_change_thresh=-0.5, miss_thresh=0.0):
         '''
         Run the Experiment on n patterns, training it and incrementing trials
         if train is True.
@@ -112,6 +114,7 @@ class Experiment:
         misses = None
         record = None
         trials = 0
+        interrupted = False
         for i in range(n):
             trials += 1
             if test_every and i % test_every == 0:
@@ -120,29 +123,44 @@ class Experiment:
                 old_test_error = test_error
                 test_error, miss_error, misses, record = self.test_all(verbose=verbose)
                 error_change = old_test_error - test_error
-                if test_error <= error_thresh or \
-                    miss_error <= miss_thresh or \
-                    error_change < error_change_thresh:
+                if miss_error <= miss_thresh:
+                    if not terse:
+                        print("-> cat err thresh  ", end='; ')
+                    interrupted = True
                     break
-            pat_err_win = self.step(train, patgen=patgen, lr=lr,
-                                    input_layer=input_layer, output_layer=output_layer,
-                                    noisy_layer=noisy_layer,
-                                    show_act=show_act, show_error=False)
-            self.current_error += pat_err_win[1]
+                if test_error <= error_thresh and (miss_thresh >= 0.0 or miss_error == 0.0):
+                    if not terse:
+                        print("-> mse err thresh  ", end='; ')
+                    interrupted = True
+                    break
+                if error_change < error_change_thresh and (miss_thresh >= 0.0 or miss_error == 0.0):
+                    if not terse:
+                        print("->err change thresh", end='; ')
+                    interrupted = True
+                    break
+            pat_err_win_tr = self.step(train, patgen=patgen, lr=lr,
+                                       input_layer=input_layer, output_layer=output_layer,
+                                       noisy_layer=noisy_layer,
+                                       show_act=show_act, show_error=False)
+            self.current_error += pat_err_win_tr[1]
         error = self.current_error / trials
-        print("{:6} trials, errors -- run: {:.3f}".format(self.trials, error), end='')
-        if test_every:
+        if not interrupted and not terse:
+            print("-> trial thresh    ", end='; ')
+        if not terse:
+            print("{:6} trials, errors -- run: {:.3f}".format(trials if report_current else self.trials, error), end='')
+        if test_every and not terse:
             print(', test: {:.3f}'.format(test_error), end='')
             if self.test_nearest:
                 print(', miss: {:.3f}'.format(miss_error))
             else:
                 print()
-        else:
+        elif not terse:
             print()
         return error, test_error, miss_error
 
     def test_all(self, pg_kind='full', reps=1,
                  input_layer=0, output_layer=-1, noisy_layer=-1,
+                 ignore_clusters=False,
                  record=None, verbose=0):
         '''Test the network on all patterns reps times.'''
         current_error = 0.0
@@ -154,20 +172,23 @@ class Experiment:
         for repetition in range(reps):
             pindex = 0
             while True:
-                pat_err_win = self.step(False, patgen=patgen, index=pindex,
-                                        input_layer=input_layer, output_layer=output_layer,
-                                        noisy_layer=noisy_layer,
-                                        show_error=verbose>0, show_act=verbose>0)
-                if not pat_err_win[0]:
+                pat_err_win_tr = self.step(False, patgen=patgen, index=pindex,
+                                           input_layer=input_layer, output_layer=output_layer,
+                                           noisy_layer=noisy_layer,
+                                           show_error=verbose>0, show_act=verbose>0)
+                if not pat_err_win_tr[0]:
                     # step() returns empty pattern for this pindex
                     break
-                current_error += pat_err_win[1]
-                target = pat_err_win[0][1]
+                current_error += pat_err_win_tr[1]
+                target = pat_err_win_tr[0][1]
+                record_out = pat_err_win_tr[3]
                 nearest_misses = \
                 self.do_nearest(pindex=pindex, patgen=patgen, target=target,
                                 pindex_errors=pindex_errors, record=record,
+                                record_out=record_out,
                                 recorded=recorded, nearest_misses=nearest_misses,
-                                verbose=0)
+                                ignore_clusters=ignore_clusters,
+                                verbose=verbose)
 #                if verbose:
 #                    print()
                 pindex += 1
@@ -193,12 +214,20 @@ class Experiment:
         return run_error, nearest_error, pindex_errors, recorded
 
     def do_nearest(self, pindex=-1, patgen=None, target=None,
-                   pindex_errors=None, record=None, recorded=None, nearest_misses=0,
+                   pindex_errors=None, record=None, recorded=None, record_out=None,
+                   nearest_misses=0, ignore_clusters=False,
                    verbose=0):
         if self.test_nearest:
-            x, nrst, nrst_i = self.nearest(target, patgen, verbose=verbose)
-            hit = nrst_i == pindex
+            x, nrst, nrst_i, nrst_in_cl = \
+              self.nearest(pindex, target, patgen, ignore_clusters=ignore_clusters,
+                           verbose=verbose)
+            if self.nearest_cluster and patgen.clusters:
+                hit = nrst_in_cl
+            else:
+                hit = nrst_i == pindex
             if not hit:
+#                if patgen.clusters and self.nearest_cluster:
+#                    print("** should be {}, is {}, different clusters".format(pindex, nrst_i))
                 nearest_misses += 1
                 # Assumes reps=1 or only records the last miss
                 pindex_errors[pindex] = nrst_i
@@ -208,13 +237,29 @@ class Experiment:
                 print("Hit target")
             if record != None and pindex >= 0 and (hit or not self.record_only_hits):
                 layer_index = record if isinstance(record, int) else -1
-                net_out = self.network.layers[layer_index].activations
-                record_out = np.array([a for a, t in zip(net_out, target) if t != NO_TARGET])
+#                if record_out is not None:
+#                    print("** record out provided: {}".format(record_out))
+                if record_out is None:
+                    net_out = self.network.layers[layer_index].activations
+                    record_out = np.array([a for a, t in zip(net_out, target) if t != NO_TARGET])
                 if pindex not in recorded:
                     recorded[pindex] = record_out
                 else:
                     recorded[pindex] += record_out
             return nearest_misses
+
+    def nearest(self, pindex, target, patgen, network=None,
+                ignore_clusters=False, verbose=0):
+        """
+        Whether the current output is closer to target than any other pattern.
+        """
+        network = network or self.network
+        output = network.get_output()
+#        patgen = self.test_pat_gen if test else self.pat_gen
+        correct, nearest, nearest_index, nearest_in_clus = \
+          patgen.get_nearest(output, pindex, target,
+                             ignore_clusters=ignore_clusters, verbose=verbose)
+        return correct, nearest, nearest_index, nearest_in_clus
 
     def test(self, n, pg_kind='full', verbose=1):
         '''Test the network on n patterns.'''
@@ -243,17 +288,6 @@ class Experiment:
         #     nearest_error = nearest_misses / n
         #     print("TEST MISS ERROR: {: .2f}".format(nearest_error))
         return run_error # , nearest_error
-
-    def nearest(self, target, patgen, network=None, verbose=0):
-        """
-        Whether the current output is closer to target than any other pattern.
-        """
-        network = network or self.network
-        output = network.get_output()
-#        patgen = self.test_pat_gen if test else self.pat_gen
-        correct, nearest, nearest_index = \
-          patgen.get_nearest(output, target, verbose=verbose)
-        return correct, nearest, nearest_index
 
     def reinit(self):
         '''Start from 0 trials and reinitalize weights in network.'''

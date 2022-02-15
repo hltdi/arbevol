@@ -613,30 +613,14 @@ class Layer:
     def calc_gradients(self, delay=0, verbose=0):
 #        print("{} calculating gradients with delay {}".format(self, delay))
         deltas = self.get_deltas(delay)
-        if self.array:
-            if delay > 0:
-                input_acts = self.delayed_activations[delay-1]
-                self.gradients = np.outer(deltas, input_acts)
-            else:
-                input_acts = self.input_vector()
-                self.gradients = np.outer(deltas, input_acts)
+        if delay > 0:
+            input_acts = self.delayed_activations[delay-1]
+            self.gradients = np.outer(deltas, input_acts)
         else:
-            for u in range(self.size):
-                delta = deltas[u]
-                if verbose:
-                    print("Delta for {}|{}: {}".format(self, u, delta))
-                if delay > 0:
-                    for i in range(self.size):
-                        src_act = self.get_activation(i, delay=delay+1)
-                        gradient = src_act * delta
-                        self.gradients[u][i] = gradient
-                else:
-                     for i in range(self.input_layer.size):
-                        src_act = self.input_layer.activations[i]
-                        gradient = src_act * delta
-                        self.gradients[u][i] = gradient
-                     # Bias
-                     self.gradients[u][self.input_layer.size] = delta
+            input_acts = self.input_vector()
+            self.gradients = np.outer(deltas, input_acts)
+            if np.any(np.isnan(self.gradients)):
+                print("**WARNING: gradients for {} include NAN".format(self))
         return self.gradient_norm()
 
     def update_weights(self, delay=0, lr=None, verbose=0):
@@ -652,48 +636,15 @@ class Layer:
 #        print("LR for {}: {}".format(self, lr))
 #        if delay > 0:
 #            print("Updating recurrent weights, delay: {}".format(delay))
-        if self.array:
-            # %% FIGURE OUT HOW TO DO DELAYS
-            wt_incrs = lr * self.gradients
-            if self.momentum:
-                wt_incrs *= self.last_wt_updates
-                self.last_wt_updates = np.copy(wt_incrs)
-            self.weights += wt_incrs
+        # %% FIGURE OUT HOW TO DO DELAYS
+        wt_incrs = lr * self.gradients
+        if np.any(np.isnan(wt_incrs)):
+            print("**WARNING: wt incrs for {} include NAN".format(self))
+        if self.momentum:
+            wt_incrs *= self.last_wt_updates
+            self.last_wt_updates = np.copy(wt_incrs)
+        self.weights += wt_incrs
 #        print("** new weight incrs\n{}".format(wt_incrs_new))
-        else:
-            for u in range(self.size):
-                if delay > 0:
-                    # Update recurrent weights only
-                    recurrent_indices = self.input_layer.recurrent_indices
-                    weight_offset = recurrent_indices[0]
-                    for i in range(len(recurrent_indices)):
-                        weight_index = i + weight_offset
-                        gradient = self.gradients[u][i]
-                        incr = gradient * lr
-                        self.weights[u][weight_index] += incr
-                    continue
-                for i in range(self.input_layer.size):
-                    gradient = self.gradients[u][i]
-                    incr = gradient * lr
-                    if self.momentum:
-                        last_upd = self.last_wt_updates[u][i]
-                        incr += self.momentum * last_upd
-                    if verbose:
-                        print("  Weight increment for {},{}: {}".format(u, i, incr))
-                    wt_incrs[u][i] = incr
-                    self.weights[u][i] += incr
-                    if self.momentum:
-                        self.last_wt_updates[u][i] = incr
-                # Bias weight
-                gradient = self.gradients[u][self.input_layer.size]
-                incr = gradient * lr
-                if self.momentum:
-                    last_upd = self.last_wt_updates[u][self.input_layer.size]
-                    incr += self.momentum * last_upd
-                if verbose:
-                    print(" Bias increment for {}: {}".format(u, incr))
-                wt_incrs[u][self.input_layer.size] = incr
-                self.incr_bias(u, incr)
         if self.recurrent and self.rectype == 'elman' and delay < 3 and len(self.delayed_activations) > delay+1:
             self.update_weights(delay=delay+1, lr=lr, verbose=verbose)
 

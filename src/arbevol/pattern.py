@@ -100,6 +100,7 @@ class PatGen:
                  check = True,                        # Whether to check for errors as patters are created
                  random_choice = True,                # Whether to choose patterns randomly
                  targets = None,                      # Function to generate targets
+                 clusters = None,                     # Function to generate clusters
                  array = True):                       # Whether to create arrays rather than lists
         '''Set pattern parameters and create patterns from patterns list or file.'''
         self.n = n
@@ -124,6 +125,7 @@ class PatGen:
         # only relevant if random_choice is False; keeps track of current pattern
         self.pindex = 0
         self.targets = targets
+        self.clusters = clusters
         if filename:
             self.read_patterns(filename)
         else:
@@ -204,6 +206,8 @@ class PatGen:
         '''
         Generate a pattern. Returns pattern followed by index, representing
         whether this is the end of an epoch.
+        The second and third elements of the tuple returned are
+        an index for sequential patterns and a pattern to be recorded.
         '''
         # Call the function
         if self.function:
@@ -283,19 +287,38 @@ class PatGen:
             return [p[1] for p in self.patterns]
         return None
 
-    def get_nearest(self, pattern, target, verbose=0):
+    def get_clusters(self):
+        """
+        Dict of target indices in clusters.
+        """
+        if self.clusters:
+            return self.clusters()
+        return None
+
+    def get_nearest(self, pattern, targ_index, target,
+                    ignore_clusters=False, verbose=0):
         """
         Find the nearest pattern among patterns to pattern,
         returning that pattern and True if it's target, False if it's not.
         """
         targets = self.get_targets()
+        clusters = self.get_clusters()
+        in_cluster = None
+        if clusters and not ignore_clusters:
+            in_cluster = clusters.get(target.cluster)
+#            print("** Getting nearest to {} for target {} (cluster: {} / {})".format(pattern, targ_index, target.cluster, clusters.get(target.cluster)))
+#            print("** Clusters: {}".format(clusters))
         if not targets:
             print("No target for get_nearest!")
             return None, False
         nearest, nearest_index = nearest_array(pattern, targets)
+        nearest_in_cluster = True
+        if clusters and in_cluster:
+#            print("** i {}, ni {}, cl {}".format(targ_index, nearest_index, in_cluster))
+            nearest_in_cluster = nearest_index in in_cluster
 #        if nearest is not target:
 #            print("** nearest {} {} {}".format(pattern, nearest, nearest_index))
-        return nearest is target, nearest, nearest_index
+        return nearest is target, nearest, nearest_index, nearest_in_cluster
 
     def __call__(self, index=-1):
         '''What to do when the object is called.'''

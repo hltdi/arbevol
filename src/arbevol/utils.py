@@ -17,9 +17,63 @@ import os, tarfile, math, random, sys, getopt, re
 import numpy as np
 from functools import reduce
 
-## ARRAYS
+## ARRAYS AND LISTS
+
+def non_corr_lists(nvalues, length, nlists):
+    '''
+    Create n lists of length length consisting of values within nvalues.
+    '''
+    lists = [[] for x in range(nlists)]
+#    range(nvalues)]
+    for l in range(length):
+        li = 0
+        while li < nlists + nvalues:
+            values = list(range(nvalues))
+            random.shuffle(values)
+            for i, v in enumerate(values):
+                if i+li >= nlists:
+                    break
+                lists[i+li].append(v)
+#                lists.append(values[i])
+            li += nvalues
+#    lists = [l for l in lists if len(l) == length]
+    for runs in range(2):
+        for lpos in range(length):
+            for li, l in enumerate(lists):
+                v = l[lpos]
+                if l.count(v) > 1:
+                    # v is duplicated in this list
+                    other_lists = [ol for i, ol in enumerate(lists) if i != li]
+                    for oli, ol in enumerate(other_lists):
+                        if v not in ol and ol[lpos] not in l:
+                            # swap the values in l and ol in position lpos
+                            l[lpos], ol[lpos] = ol[lpos], l[lpos]
+                            break
+
+    # l = 0
+    # while l < length:
+    #     for nl in range(nlists):
+    #         print(lists)
+    #         l1 = lists[nl]
+    #         prev_values = []
+    #         previous = []
+    #         if nl >= 1:
+    #             previous = lists[:nl]
+    #             # used in other lists in the position
+    #             prev_values = [x[-1] for x in previous]
+    #         #[0, 1]; get the next value
+    #         opts = set(range(nvalues))
+    #         if prev_values:
+    #             opts = opts.difference(prev_values)
+    #         # values not yet in the list
+    #         opts = opts.difference(l1)
+    #         v = random.choice(list(opts))
+    #         l1.append(v)
+    #     l += 1
+    return lists
 
 def noisify(array, sd=DFLT_SD, indices=None):
+#    print("** noisifying {} SD = {}".format(array, sd))
     if indices:
         # Only noisify position from start to end
         start, end = indices
@@ -36,6 +90,20 @@ def noisify1(value, sd=DFLT_SD):
 def gen_value_opts(nvalues):
     interval = 1.0 / (nvalues-1.0)
     return [i * interval for i in range(nvalues)]
+
+def round_nvalues(value, nvalues, opts=None):
+    opts = opts or gen_value_opts(nvalues)
+    return nearest(value, opts)
+
+def nearest(value, values):
+    answer = -1
+    nrst_dist = 100.0
+    for v in values:
+        dist = abs(value - v)
+        if dist < nrst_dist:
+            nrst_dist = dist
+            answer = v
+    return answer
 
 def gen_value_probs(nvalues):
     """
@@ -60,6 +128,35 @@ def gen_value(nvalues, i, spec=None, values=None):
             return v1
     return 1.0
 
+def flip_values(array, npos, nvalues, flip_positions=None, length=0, opts=None, ran=False,
+                verbose=0):
+    length = length or len(array)
+    opts = opts or gen_value_opts(nvalues)
+    if not flip_positions:
+        positions = list(range(length))
+        if npos == 1:
+            flip_positions = [random.choice(positions)]
+        else:
+            flip_positions = list(range(length))
+            random.shuffle(flip_positions)
+            flip_positions = flip_positions[:npos]
+    for pos in flip_positions:
+        if ran:
+            array[pos] = random.choice(opts)
+        else:
+            current = opts.index(nearest(array[pos], opts))
+            if verbose:
+                print("** pos {}, a {}, current {}, length {}".format(pos, array[pos], current, length))
+            if current == 0:
+                array[pos] = opts[1]
+            elif current == nvalues-1:
+                array[pos] = opts[-2]
+            elif random.random() < 0.5:
+                array[pos] = opts[current+1]
+            else:
+                array[pos] = opts[current-1]
+#        array[pos] = random.choice(opts)
+
 # def gen_value(nvalues):
 #     ran = np.random.rand()
 #     minval = 1.0 / nvalues
@@ -77,6 +174,7 @@ def gen_array(nvalues, length, spec=None):
     All other positions are generated randomly.
     '''
     values = gen_value_probs(nvalues)
+#    print("**", nvalues, length, spec, values)
     iter = (gen_value(nvalues, i, spec=spec, values=values) for i in range(length))
     return np.fromiter(iter, float)
 
@@ -309,6 +407,13 @@ def array_distance(a1, a2):
     """
     return np.sqrt(np.sum(np.square(diff2_dont_care(a1, a2))))
 #    a1 - a2)))
+
+def adistance(a1, a2):
+    """
+    Simpler distance measure than array_distance because it doesn't look for
+    DONT_CAREs.
+    """
+    return np.sqrt(np.sum(np.square(a1 - a2)))
 
 def nearest_array(array, arrays):
     """

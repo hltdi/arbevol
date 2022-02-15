@@ -8,13 +8,16 @@ from population import *
 
 print("Welcome to arbevol, a program for investigating the learning and evolution of words.")
 
-def init_pop(nmeanings=25, nhid=20, mlength=5, flength=5, noise=0.0, mvalues=5,
-             iconic=True, dont_init=False, clusters=None, sep_amount=0.04,
-             init_meanings=None, init_lex=None):
-    pop = Population(10, iconic=iconic, nmeanings=nmeanings, nhid=nhid,
+def init_pop(n=5, nmeanings=100, nhid=20, mlength=5, flength=5, noise=0.0, mvalues=5,
+             iconic=False, dont_init=False, clusters=None, sep_amount=0.02,
+             deiconize=0.5, constant_flip=True, nearest_cluster=False,
+             init_meanings=None, init_lex=None, terse=False):
+    pop = Population(n, iconic=iconic, nmeanings=nmeanings, nhid=nhid,
                      mlength=mlength, flength=flength, noise=noise, mvalues=mvalues,
                      clusters=clusters, dont_init=dont_init, sep_amount=sep_amount,
-                     init_meanings=init_meanings, init_lex=init_lex)
+                     constant_flip=constant_flip, deiconize=deiconize,
+                     nearest_cluster=nearest_cluster,
+                     init_meanings=init_meanings, init_lex=init_lex, terse=terse)
     return pop
 
 ##def teach(population=None, tindex=0, sindex=1, popsize=10,
