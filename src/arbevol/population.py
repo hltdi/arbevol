@@ -261,7 +261,7 @@ class Population(list):
                     d += person1.lexicon.distance(person2.lexicon)
             d /= (self.size - 1)
             distances.append(d)
-        return sum(distances) / self.size
+        return np.round(sum(distances) / self.size, 3)
 
     def mean_dc(self):
         """
@@ -286,7 +286,7 @@ class Population(list):
 
     def mutuality(self, p1, p2):
         """
-        Measure of the extent to which Persons p1 and p2 understanding
+        Measure of the extent to which Persons p1 and p2 understand
         one another.
         """
         run_err1, miss_err1, err_index1, form_dict1 = p1.test_paired(p2)
@@ -304,7 +304,7 @@ class Population(list):
                 n += 1
         m[0] /= n
         m[1] /= n
-        return np.round(m, 3)
+        return round(m[0], 3), round(m[1], 3)
 
 class Person:
 
